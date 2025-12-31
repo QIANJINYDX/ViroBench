@@ -1,0 +1,75 @@
+# -------------------
+# 1. 操作系统生成的垃圾文件
+# -------------------
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# -------------------
+# 2. Python 编译文件 & 缓存
+# -------------------
+__pycache__/
+*.py[cod]
+*$py.class
+
+# -------------------
+# 3. 虚拟环境 (Virtual Environments)
+# -------------------
+# 常见的虚拟环境目录名
+venv/
+env/
+.env/
+.venv/
+my_env/
+
+# -------------------
+# 4. IDE 和 编辑器配置 (不想上传个人的编辑器设置)
+# -------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# -------------------
+# 5. 敏感信息 (非常重要！)
+# -------------------
+# 包含 API Key、数据库密码的配置文件
+.env
+config.py
+secrets.json
+*.pem
+id_rsa
+
+# -------------------
+# 6. AI / 数据科学 / 大文件 (避免上传过大文件)
+# -------------------
+# Jupyter Notebook 检查点
+.ipynb_checkpoints/
+
+# 大型数据集文件夹 (建议将数据放在特定目录下忽略)
+data/
+datasets/
+raw_data/
+
+# 模型权重文件 (通常几百MB到几GB，GitHub传不上去)
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.h5
+*.onnx
+models/
+
+# -------------------
+# 7. 日志文件
+# -------------------
+*.log
+logs/
+
+cache
+cache_cds_fasta
+GeneBreaker
+results
+ncbi_viral_ftp_mirror.sh
+evo2
+model/configs
