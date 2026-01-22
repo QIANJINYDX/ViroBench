@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Sequence, Literal
+from typing import Optional, Sequence, Literal, Dict, Union, Mapping, Any
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from models.mlp_head import MLPHead
 
 
 @dataclass
@@ -50,6 +51,7 @@ def _get_norm(norm: str, c: int, gn_groups: int) -> nn.Module:
 
 class SE1D(nn.Module):
     """Squeeze-and-Excitation for 1D feature maps (B,C,L)."""
+
     def __init__(self, channels: int, ratio: float = 0.25):
         super().__init__()
         hidden = max(4, int(channels * ratio))
@@ -70,6 +72,7 @@ class ResidualBlock1D(nn.Module):
       x -> norm -> relu -> conv -> norm -> relu -> conv -> (+ skip) -> dropout
     Supports downsample via stride in the first conv.
     """
+
     def __init__(
         self,
         in_ch: int,
@@ -86,16 +89,19 @@ class ResidualBlock1D(nn.Module):
         pad = kernel_size // 2
 
         self.n1 = _get_norm(norm, in_ch, gn_groups)
-        self.c1 = nn.Conv1d(in_ch, out_ch, kernel_size=kernel_size, stride=stride, padding=pad, bias=False)
+        self.c1 = nn.Conv1d(in_ch, out_ch, kernel_size=kernel_size,
+                            stride=stride, padding=pad, bias=False)
 
         self.n2 = _get_norm(norm, out_ch, gn_groups)
-        self.c2 = nn.Conv1d(out_ch, out_ch, kernel_size=kernel_size, stride=1, padding=pad, bias=False)
+        self.c2 = nn.Conv1d(
+            out_ch, out_ch, kernel_size=kernel_size, stride=1, padding=pad, bias=False)
 
         self.se = SE1D(out_ch, ratio=se_ratio) if use_se else None
         self.drop = nn.Dropout(p=dropout) if dropout > 0 else nn.Identity()
 
         if in_ch != out_ch or stride != 1:
-            self.proj = nn.Conv1d(in_ch, out_ch, kernel_size=1, stride=stride, bias=False)
+            self.proj = nn.Conv1d(
+                in_ch, out_ch, kernel_size=1, stride=stride, bias=False)
         else:
             self.proj = nn.Identity()
 
@@ -122,17 +128,46 @@ class GenomeCNN1D(nn.Module):
     Input:
       x: LongTensor (B, L), tokens in [0..vocab_size], 0 is PAD
     Output:
-      logits: (B, out_dim)
+      - 单任务：logits Tensor, shape (B, out_dim)
+      - 多任务：dict[str, Tensor]，每个 key 对应一个任务的 logits，shape (B, out_dim_task)
+
+    多任务用法（例如同时预测 kingdom/phylum/class/order/family）：
+      model = GenomeCNN1D(out_dim={
+          "kingdom": 10,
+          "phylum": 30,
+          "class": 80,
+          "order": 200,
+          "family": 500,
+      })
     """
-    def __init__(self, out_dim: int = 100, cfg: CNNConfig = CNNConfig()):
+
+    TaskOutDims = Union[int, Sequence[int], Mapping[str, int]]
+
+    class _Head(nn.Module):
+        def __init__(self, in_dim: int, out_dim: int):
+            super().__init__()
+            self.head = MLPHead(
+                input_dim=in_dim,
+                task="multiclass",
+                num_outputs=out_dim,
+            )
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            return self.head(x)
+
+    def __init__(
+        self,
+        out_dim: TaskOutDims = 100,
+        cfg: CNNConfig = CNNConfig(),
+        task_names: Optional[Sequence[str]] = None,
+    ):
         super().__init__()
-        if out_dim <= 0:
-            raise ValueError(f"out_dim must be > 0, got {out_dim}")
         if len(cfg.channels) != len(cfg.blocks_per_stage):
-            raise ValueError("cfg.channels and cfg.blocks_per_stage must have same length")
+            raise ValueError(
+                "cfg.channels and cfg.blocks_per_stage must have same length")
 
         self.cfg = cfg
-        self.out_dim = out_dim
+        self.out_dim = out_dim  # int | list[int] | dict[str,int]
 
         # +1 because tokens include PAD=0
         self.embedding = nn.Embedding(
@@ -144,7 +179,8 @@ class GenomeCNN1D(nn.Module):
         # stem: (B,E,L) -> (B,C0,L/2)
         stem_out = cfg.channels[0]
         self.stem = nn.Sequential(
-            nn.Conv1d(cfg.embed_dim, stem_out, kernel_size=cfg.kernel_size, stride=2, padding=cfg.kernel_size // 2, bias=False),
+            nn.Conv1d(cfg.embed_dim, stem_out, kernel_size=cfg.kernel_size,
+                      stride=2, padding=cfg.kernel_size // 2, bias=False),
             _get_norm(cfg.norm, stem_out, cfg.gn_groups),
             nn.ReLU(inplace=True),
         )
@@ -197,15 +233,46 @@ class GenomeCNN1D(nn.Module):
         else:
             raise ValueError(f"Unsupported global_pool: {cfg.global_pool}")
 
-        # head
-        self.head = nn.Sequential(
-            nn.Linear(in_ch, cfg.head_hidden),
-            nn.ReLU(inplace=True),
-            nn.Dropout(p=cfg.head_dropout),
-            nn.Linear(cfg.head_hidden, out_dim),
-        )
+        # heads (single-task or multi-task)
+        self.is_multitask = not isinstance(out_dim, int)
+        if isinstance(out_dim, int):
+            if out_dim <= 0:
+                raise ValueError(f"out_dim must be > 0, got {out_dim}")
+            self.task_names = None
+            self.head = self._Head(in_ch, out_dim)
+            self.heads = None
+        else:
+            # sequence[int] or mapping[str,int]
+            if isinstance(out_dim, Mapping):
+                out_dims: Dict[str, int] = {
+                    str(k): int(v) for k, v in out_dim.items()}
+                names = list(out_dims.keys())
+            else:
+                dims = [int(x) for x in out_dim]
+                if task_names is not None:
+                    if len(task_names) != len(dims):
+                        raise ValueError(
+                            "task_names length must match out_dim length")
+                    names = [str(x) for x in task_names]
+                else:
+                    names = [f"task{i}" for i in range(len(dims))]
+                out_dims = {n: d for n, d in zip(names, dims)}
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+            for n, d in out_dims.items():
+                if d <= 0:
+                    raise ValueError(
+                        f"out_dim for task '{n}' must be > 0, got {d}")
+
+            self.task_names = names
+            self.head = None
+            self.heads = nn.ModuleDict(
+                {n: self._Head(in_ch, out_dims[n]) for n in names}
+            )
+
+    def forward_features(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        返回 pooled 特征向量 (B, C)，便于外部自定义 head。
+        """
         if x.dim() != 2:
             raise ValueError(f"Expected x shape (B, L), got {tuple(x.shape)}")
         x = x.long()
@@ -218,10 +285,15 @@ class GenomeCNN1D(nn.Module):
         x = self.stages(x)
 
         # (B,C,L') -> (B,C,1) -> (B,C)
-        x = self.global_pool(x).squeeze(-1)
+        return self.global_pool(x).squeeze(-1)
 
-        logits = self.head(x)
-        return logits
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        feat = self.forward_features(x)
+        if not self.is_multitask:
+            assert self.head is not None
+            return self.head(feat)
+        assert self.heads is not None
+        return {name: head(feat) for name, head in self.heads.items()}
 
 
 if __name__ == "__main__":
@@ -240,7 +312,16 @@ if __name__ == "__main__":
         head_dropout=0.3,
         use_se=False,
     )
+    # single-task
     model = GenomeCNN1D(out_dim=100, cfg=cfg)
     x = torch.randint(0, 6, (4, 512))  # 0..5
     y = model(x)
     print("logits:", y.shape)  # (4, 100)
+
+    # multi-task
+    mt = GenomeCNN1D(
+        out_dim={"kingdom": 10, "phylum": 20, "family": 50}, cfg=cfg)
+    y2 = mt(x)
+    print("multitask keys:", list(y2.keys()))
+    for k, v in y2.items():
+        print(k, v.shape)

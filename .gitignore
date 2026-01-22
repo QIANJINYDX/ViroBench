@@ -58,7 +58,8 @@ raw_data/
 *.safetensors
 *.h5
 *.onnx
-models/
+models/biofm-eval
+models/OmniReg-GPT
 
 # -------------------
 # 7. 日志文件
@@ -73,3 +74,16 @@ results
 ncbi_viral_ftp_mirror.sh
 evo2
 model/configs
+cnn_architecture.png
+core.[0-9]*
+
+test.py
+jobs_virus.txt
+gen_batch_virus.sh
+CUR_TEST/
+configs
+models/nemotron_poetstructv2_model.py
+models/nemotronH_model_padding.py
+models/nemotronH_model.py
+models/nemotronH_MSA_model.py
+CUR_TEST/cds_length_distribution_check.png

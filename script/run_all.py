@@ -1,0 +1,1086 @@
+#!/usr/bin/env python3
+import argparse
+import sys
+import os
+import random
+import re
+import traceback
+from typing import Dict
+import torch
+import pandas as pd
+import time
+from datetime import datetime
+
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Put project root at the front so local packages (e.g. `datasets/`) win over site-packages.
+sys.path.insert(0, PROJECT_ROOT)
+
+import torch.nn as nn
+from models.mlp_head import MLPHead
+from datasets.virus_datasets import VirusSplitDatasets
+from evaluators.finetune import FineTuneSeqEvaluator
+
+class MultiTaskMLPHead(nn.Module):
+    def __init__(self, input_dim: int, task_out_dims: Dict[str, int]):
+        super().__init__()
+        self.task_names = list(task_out_dims.keys())
+        self.heads = nn.ModuleDict({
+            name: MLPHead(
+                input_dim=input_dim,
+                task="multiclass",
+                num_outputs=int(task_out_dims[name]),
+            )
+            for name in self.task_names
+        })
+
+    def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
+        return {name: head(x) for name, head in self.heads.items()}
+
+
+
+def save_timing_records(timing_records, csv_path):
+    """保存时间记录到CSV文件（追加模式）"""
+    if not timing_records:
+        print("[INFO] 没有时间记录需要保存")
+        return
+
+    df_new = pd.DataFrame(timing_records)
+
+    # 检查文件是否存在
+    if os.path.exists(csv_path):
+        # 读取现有数据（跳过idx列）
+        df_existing = pd.read_csv(csv_path)
+        # 如果存在idx列，删除它
+        if 'idx' in df_existing.columns:
+            df_existing = df_existing.drop(columns=['idx'])
+        # 合并数据
+        df = pd.concat([df_existing, df_new], ignore_index=True)
+    else:
+        df = df_new
+
+    # 重新生成idx列（放在第一列）
+    df.insert(0, 'idx', range(1, len(df) + 1))
+
+    # 保存到指定路径
+    df.to_csv(csv_path, index=False, encoding='utf-8')
+    print(f"[INFO] 时间记录已保存到: {csv_path}")
+
+    # 打印本次耗时统计
+    current_time = df_new['用时(秒)'].sum()
+    print(f"[INFO] 本次总耗时: {current_time:.2f} 秒 ({current_time/60:.2f} 分钟)")
+    print(f"[INFO] 累计记录条数: {len(df)}")
+
+
+def _infer_embedding_dim(model, layer_name, pool, default_dim, sample_length=512):
+    """Try to infer embedding dimension via a single forward pass."""
+    sample_length = max(4, sample_length)
+    sample_seq = "".join(random.choices("ACGT", k=sample_length))
+    try:
+        embedding = model.get_embedding(
+            [sample_seq],
+            layer_name=layer_name,
+            pool=pool if pool is not None else "mean",
+            batch_size=1,
+            return_numpy=True,
+        )
+        if embedding is not None and getattr(embedding, "shape", None):
+            return int(embedding.shape[-1])
+    except Exception as exc:
+        print(f"[WARN] 自动检测 hidden_size 失败，将使用默认值 {default_dim}。原因: {exc}")
+    return default_dim
+
+
+def _infer_embedding_dim_hyenadna(model, pool, default_dim, sample_length=512):
+    """Try to infer embedding dimension for HyenaDNA model (doesn't support layer_name)."""
+    sample_length = max(4, sample_length)
+    sample_seq = "".join(random.choices("ACGT", k=sample_length))
+    try:
+        embedding = model.get_embedding(
+            [sample_seq],
+            pool=pool if pool is not None else "mean",
+            batch_size=1,
+            return_numpy=True,
+        )
+        if embedding is not None and getattr(embedding, "shape", None):
+            return int(embedding.shape[-1])
+    except Exception as exc:
+        print(f"[WARN] 自动检测 hidden_size 失败，将使用默认值 {default_dim}。原因: {exc}")
+    return default_dim
+
+
+def _infer_embedding_dim_nucleotide_transformer(model, pool, default_dim, sample_length=512):
+    """Try to infer embedding dimension for NucleotideTransformer model (doesn't support layer_name)."""
+    sample_length = max(4, sample_length)
+    sample_seq = "".join(random.choices("ACGT", k=sample_length))
+    try:
+        embedding = model.get_embedding(
+            [sample_seq],
+            pool=pool if pool is not None else "mean",
+            batch_size=1,
+            return_numpy=True,
+        )
+        if embedding is not None and getattr(embedding, "shape", None):
+            return int(embedding.shape[-1])
+    except Exception as exc:
+        print(f"[WARN] 自动检测 hidden_size 失败，将使用默认值 {default_dim}。原因: {exc}")
+    return default_dim
+
+
+def _infer_embedding_dim_genos(model, pool, default_dim, sample_length=512):
+    """Try to infer embedding dimension for Genos model (doesn't support layer_name)."""
+    sample_length = max(4, sample_length)
+    sample_seq = "".join(random.choices("ACGT", k=sample_length))
+    try:
+        embedding = model.get_embedding(
+            [sample_seq],
+            pool=pool if pool is not None else "mean",
+            batch_size=1,
+            return_numpy=True,
+        )
+        if embedding is not None and getattr(embedding, "shape", None):
+            return int(embedding.shape[-1])
+    except Exception as exc:
+        print(f"[WARN] 自动检测 hidden_size 失败，将使用默认值 {default_dim}。原因: {exc}")
+    return default_dim
+
+
+def run(
+    model_name: str,
+    dataset_name: str,
+    model_dir: str = None,
+    args_hidden_size: int = 0,
+    results_root_name: str = "results",
+    timing_records: list = None,
+    timing_log_csv: str = None,
+    window_len: int = 0,
+    train_num_windows: int = 0,
+    eval_num_windows: int = -1,
+    lr: float = 1e-4,
+    num_workers: int = 96,
+    early_stopping_patience: int = 20,
+    head_batch_size: int = 0,
+    emb_batch_size_override: int = 0,
+) -> None:
+    print(f"[INFO] model_name = {model_name}")
+    print(f"[INFO] dataset_name = {dataset_name}")
+    print(f"[INFO] model_dir = {model_dir}，仅NemotronH系列模型生效")
+    # 初始化时间记录列表
+    if timing_records is None:
+        timing_records = []
+        is_root_call = True
+    else:
+        is_root_call = False
+
+    # 设置默认的timing_log_csv路径
+    if timing_log_csv is None:
+        timing_log_csv = os.path.join(PROJECT_ROOT, "time_log.csv")
+    print(f"[INFO] timing_log_csv = {timing_log_csv}")
+
+    if os.path.isabs(results_root_name):
+        results_root = results_root_name
+    else:
+        results_root = os.path.join(PROJECT_ROOT, results_root_name)
+    os.makedirs(results_root, exist_ok=True)
+    print(f"[INFO] results_root = {results_root}")
+    data_batch_size = 1024
+    max_length = None
+    emb_layer_name = None
+    if model_name == "caduceus-ph" or model_name == "caduceus-ps":
+        print(f"[INFO] model_name = {model_name}")
+        # seqlen-131k_d_model-256_n_layer-16
+        from models import CaduceusModel
+        HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/cache"
+        os.environ["HF_HOME"] = HF_HOME
+        MODEL_DIR = f"/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/{model_name}"
+        model = CaduceusModel(
+            model_name=model_name,
+            model_path=MODEL_DIR,
+            hf_home=HF_HOME,
+            device=None,   # 自动
+        )
+        if model_name == "caduceus-ph":
+            hidden_size = 256
+        elif model_name == "caduceus-ps":
+            hidden_size = 512
+        batch_size = 16
+        emb_pool = "mean"
+        max_length = 131072
+    elif model_name == "DNABERT-2-117M":
+        from models import DNABERT2Model
+        MODEL_DIR = f"/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/{model_name}"
+        HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/cache"
+        model = DNABERT2Model(model_name, MODEL_DIR,
+                              HF_HOME, use_mlm_head=True)
+        hidden_size = 4096
+        batch_size = 16
+        emb_pool = "mean"
+    elif model_name == "DNABERT-3" or model_name == "DNABERT-4" or model_name == "DNABERT-5" or model_name == "DNABERT-6":
+        from models import DNABERTModel
+        # 提取 k-mer 值（例如 "DNABERT-6" -> "6"）
+        kmer = model_name.split("-")[-1]
+        MODEL_DIR = f"/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/DNA_bert_{kmer}"
+        HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/cache"
+        model = DNABERTModel(
+            model_name=f"DNABERT-{kmer}",
+            model_path=MODEL_DIR,
+            hf_home=HF_HOME,
+            device=None,          # 自动选 GPU/CPU
+            # use_mlm_head=False,   # 先跑嵌入提取
+            kmer_size=kmer,
+            auto_kmer=True,
+        )
+        batch_size = 16
+        emb_pool = "cls"
+        max_length = 512
+        # 动态检测 hidden_size
+        hidden_size = _infer_embedding_dim(
+            model,
+            layer_name=None,  # DNABERT 使用 layer_index，但 layer_name 参数会被忽略
+            pool=emb_pool,
+            default_dim=768,  # DNABERT 的默认 hidden_size
+            sample_length=min(512, max_length or 512),
+        )
+    elif model_name == "DNABERT-S":
+        from models.dnaberts_model import DNABERTSModel
+        # 提取 k-mer 值（例如 "DNABERT-6" -> "6"）
+        kmer = model_name.split("-")[-1]
+        MODEL_DIR = f"/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/DNABERT-S"
+        HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/cache"
+        model = DNABERTSModel(
+            model_name=f"DNABERT-S",
+            model_path=MODEL_DIR,
+        )
+        batch_size = 16
+        emb_pool = "mean"
+        max_length = 512
+        # 动态检测 hidden_size
+        # hidden_size = _infer_embedding_dim(
+        #     model,
+        #     layer_name=None,  # DNABERT 使用 layer_index，但 layer_name 参数会被忽略
+        #     pool=emb_pool,
+        #     default_dim=768,  # DNABERT 的默认 hidden_size
+        #     sample_length=min(512, max_length or 512),
+        # )
+        hidden_size = 768
+    elif model_name == "evo-1-8k-base" or model_name == "evo-1-131k-base" or model_name == "evo-1.5-8k-base":
+        from models import Evo1Model
+        MODEL_DIR = f"/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/{model_name}"
+        CFG_PATH = f"/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/{model_name}/{model_name}_inference.yml"
+        HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/cache"
+        model = Evo1Model(model_name, MODEL_DIR,
+                          CFG_PATH, HF_HOME, device=None)
+        hidden_size = 4096
+        batch_size = 1
+        emb_pool = "final"
+    elif model_name == "evo2_1b_base" or model_name == "evo2_7b_base" or model_name == "evo2_40b_base" or model_name == "evo2_40b" or model_name == "evo2_7b":
+        from models import Evo2Model
+        MODEL_DIR = f"/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/{model_name}/{model_name}.pt"
+        model = Evo2Model(model_name, MODEL_DIR)
+        if model_name == "evo2_1b_base":
+            # 更保守的默认 batch_size，避免 embedding 阶段显存/内存被杀
+            batch_size = 8
+            hidden_size = 1920
+            emb_layer_name = "blocks.24"
+            max_length = 8192
+        elif model_name == "evo2_7b_base" or model_name == "evo2_7b":
+            batch_size = 16
+            hidden_size = 4096
+            emb_layer_name = "blocks.26"
+            max_length = 1000000
+        elif model_name == "evo2_40b" or model_name == "evo2_40b_base":
+            batch_size = 1
+            hidden_size = 8192
+            emb_layer_name = "blocks.20"
+            max_length = 1000000
+        emb_pool = "final"
+    elif model_name == "gpn-msa":
+        from models import GPNMSAModel
+        MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/gpn-msa-sapiens"
+        MSA_PATH = f"/mnt/s3mount/peijunlin/gpn_msa/peijunlin/89.zarr"
+        model = GPNMSAModel(model_name, MODEL_DIR, MSA_PATH, device="cuda")
+        hidden_size = 768
+        batch_size = 16
+        emb_pool = "mean"
+    elif model_name == "hyenadna" or model_name == "hyenadna-tiny-16k" or model_name == "hyenadna-tiny-1k" or model_name == "hyenadna-small-32k" or model_name == "hyenadna-medium-160k" or model_name == "hyenadna-medium-450k" or model_name == "hyenadna-large-1m":
+        from models import HyenaDNAModel
+        HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/cache"
+        os.environ["HF_HOME"] = HF_HOME
+
+        if model_name == "hyenadna-tiny-16k":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/hyenadna-tiny-16k-seqlen-d128-hf"
+        elif model_name == "hyenadna-tiny-1k":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/hyenadna-tiny-1k-seqlen-hf"
+        elif model_name == "hyenadna-small-32k":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/hyenadna-small-32k-seqlen-hf"
+        elif model_name == "hyenadna-medium-160k":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/hyenadna-medium-160k-seqlen-hf"
+        elif model_name == "hyenadna-medium-450k":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/hyenadna-medium-450k-seqlen-hf"
+        elif model_name == "hyenadna-large-1m":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/hyenadna-large-1m-seqlen-hf"
+
+        # 从路径中提取模型名称（去掉路径前缀和可能的后缀）
+        # 例如: /inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/hyenadna-large-1m-seqlen-hf -> hyenadna-large-1m
+        model_dir_name = os.path.basename(os.path.normpath(MODEL_DIR))
+        # 提取模型名称（去掉 -seqlen-hf 等后缀）
+        if "-seqlen-hf" in model_dir_name:
+            hyenadna_model_name = model_dir_name.replace("-seqlen-hf", "")
+        elif "-seqlen-d" in model_dir_name:
+            # 处理类似 hyenadna-tiny-16k-seqlen-d128-hf 的情况
+            hyenadna_model_name = re.sub(
+                r"-seqlen-d\d+-hf$", "", model_dir_name)
+        else:
+            hyenadna_model_name = model_dir_name
+
+        model = HyenaDNAModel(
+            model_name=hyenadna_model_name,
+            model_path=MODEL_DIR,
+            task="classification",
+            device_map="auto",
+            torch_dtype=torch.bfloat16,
+        )
+        # 重新设置model_name方便保存（使用目录名，仅在提供了model_dir时更新）
+        # if model_dir:
+        #     model_name = model_dir_name
+        batch_size = 64
+        emb_pool = "final"
+        max_length = 160000
+        # 动态检测 hidden_size（HyenaDNA 使用专门的检测函数，因为不支持 layer_name 参数）
+        hidden_size = _infer_embedding_dim_hyenadna(
+            model,
+            pool=emb_pool,
+            default_dim=256,
+            sample_length=min(512, max_length or 512),
+        )
+    elif model_name == "nt-500m-human" or model_name == "nt-500m-1000g" or model_name == "nt-2.5b-1000g" or model_name == "nt-2.5b-ms" or model_name == "ntv2-50m-ms-3kmer" or model_name == "ntv2-50m-ms" or model_name == "ntv2-100m-ms" or model_name == "ntv2-250m-ms" or model_name == "ntv2-500m-ms":
+        from models import NucleotideTransformerModel
+        HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/cache"
+        os.environ["HF_HOME"] = HF_HOME
+
+        nt_model_name = model_name
+        if model_name == "nt-500m-human":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/nucleotide-transformer-500m-human-ref"
+        elif model_name == "nt-500m-1000g":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/nucleotide-transformer-500m-1000g"
+        elif model_name == "nt-2.5b-1000g":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/nucleotide-transformer-2.5b-1000g"
+        elif model_name == "nt-2.5b-ms":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/nucleotide-transformer-2.5b-multi-species"
+        elif model_name == "ntv2-50m-ms-3kmer":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/nucleotide-transformer-v2-50m-3mer-multi-species"
+        elif model_name == "ntv2-50m-ms":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/nucleotide-transformer-v2-50m-multi-species"
+        elif model_name == "ntv2-100m-ms":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/nucleotide-transformer-v2-100m-multi-species"
+        elif model_name == "ntv2-250m-ms":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/nucleotide-transformer-v2-250m-multi-species"
+        elif model_name == "ntv2-500m-ms":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/nucleotide-transformer-v2-500m-multi-species"
+
+        model = NucleotideTransformerModel(
+            model_name=nt_model_name,
+            model_path=MODEL_DIR,
+            hf_home=HF_HOME,
+            device_map=None,                 # 如需分片可设为 "auto"
+            torch_dtype=None,                # 可设为 torch.bfloat16
+            trust_remote_code=True,
+        )
+
+        batch_size = 16
+        emb_pool = "final"
+        max_length = 6000
+        # 动态检测 hidden_size（NucleotideTransformer 使用专门的检测函数，因为不支持 layer_name 参数）
+        hidden_size = _infer_embedding_dim_nucleotide_transformer(
+            model,
+            pool=emb_pool,
+            default_dim=2560,
+            sample_length=min(512, max_length or 512),
+        )
+    elif model_name == "ntv3-8m-pre" or model_name == "ntv3-100m-pre" or model_name == "ntv3-650m-pre":
+        from models.ntv3 import NTV3Model
+        if model_name == "ntv3-8m-pre":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/NTv3_8M_pre"
+        elif model_name == "ntv3-100m-pre":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/NTv3_100M_pre"
+        elif model_name == "ntv3-650m-pre":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/NTv3_650M_pre"
+        model = NTV3Model(
+            model_name=model_name,
+            model_path=MODEL_DIR,
+            trust_remote_code=True,
+        )
+        batch_size = 16
+        emb_pool = "mean"
+        max_length = 6000
+        # 动态检测 hidden_size（NucleotideTransformer 使用专门的检测函数，因为不支持 layer_name 参数）
+        hidden_size = _infer_embedding_dim_nucleotide_transformer(
+            model,
+            pool=emb_pool,
+            default_dim=2560,
+            sample_length=min(512, max_length or 512),
+        )
+    elif model_name == "ntv3-100m-post" or model_name == "ntv3-650m-post":
+        from models.ntv3_post import NTV3Model
+        if model_name == "ntv3-100m-post":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/NTv3_100M_post"
+        elif model_name == "ntv3-650m-post":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/NTv3_650M_post"
+        model = NTV3Model(
+            model_name=model_name,
+            model_path=MODEL_DIR,
+            trust_remote_code=True,
+        )
+        batch_size = 16
+        emb_pool = "mean"
+        max_length = 6000
+        # 动态检测 hidden_size（NucleotideTransformer 使用专门的检测函数，因为不支持 layer_name 参数）
+        hidden_size = _infer_embedding_dim_nucleotide_transformer(
+            model,
+            pool=emb_pool,
+            default_dim=2560,
+            sample_length=min(512, max_length or 512),
+        )
+    elif model_name == "Genos-1.2B" or model_name == "Genos-10B" or model_name == "Genos-10B-v2":
+        from models import GenosModel
+        HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/cache"
+        os.environ["HF_HOME"] = HF_HOME
+
+        # 设置模型路径
+        if model_name == "Genos-1.2B":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/Genos-1.2B"
+            default_hidden_size = 1024  # Genos-1.2B 的默认 hidden_size
+            batch_size = 16
+        elif model_name == "Genos-10B":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/Genos-10B"
+            default_hidden_size = 2048  # Genos-10B 的默认 hidden_size（需要根据实际模型调整）
+            batch_size = 8  # 10B 模型更大，使用较小的 batch_size
+        elif model_name == "Genos-10B-v2":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/Genos-10B-v2/"
+            default_hidden_size = 2048  # Genos-10B-V2 的默认 hidden_size（需要根据实际模型调整）
+            batch_size = 8  # 10B-V2 模型更大，使用较小的 batch_size
+        model = GenosModel(
+            model_name=model_name,
+            model_path=MODEL_DIR,
+            hf_home=HF_HOME,
+            device=None,   # 自动
+            use_flash_attention=False,  # 根据环境设置，如果支持可以设为 True
+        )
+        emb_pool = "mean"  # Genos 主要使用 mean pooling
+        max_length = 131072  # Genos 支持最大 128k 长度
+
+        # 动态检测 hidden_size
+        hidden_size = _infer_embedding_dim_genos(
+            model,
+            pool=emb_pool,
+            default_dim=default_hidden_size,
+            sample_length=min(512, max_length or 512),
+        )
+    elif model_name == "gpn-brassicales":
+        from models import GPNBrassicalesModel
+        HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/cache"
+        os.environ["HF_HOME"] = HF_HOME
+        MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/gpn-brassicales"
+        model = GPNBrassicalesModel(
+            model_name=model_name,
+            model_path=MODEL_DIR,
+            device=None,  # 自动
+            load_mlm_head=True,  # 需要 PLL 评分
+        )
+        hidden_size = 768  # GPN-Brassicales 的默认 hidden_size
+        batch_size = 16
+        emb_pool = "mean"
+        max_length = 128  # 根据模型配置调整
+        # 动态检测 hidden_size
+        hidden_size = _infer_embedding_dim(
+            model,
+            layer_name=None,  # GPN-Brassicales 使用 pool 参数
+            pool=emb_pool,
+            default_dim=768,
+            sample_length=min(128, max_length or 128),
+        )
+    elif model_name == "GROVER" or model_name == "grover":
+        from models import GROVERModel
+        HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/cache"
+        os.environ["HF_HOME"] = HF_HOME
+        MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/GROVER"
+        model = GROVERModel(
+            model_name="GROVER",
+            model_path=MODEL_DIR,
+            hf_home=HF_HOME,
+            device=None,  # 自动
+            use_mlm_head=True,  # 需要 PLL 评分
+        )
+        hidden_size = 768  # GROVER 的默认 hidden_size
+        batch_size = 16
+        emb_pool = "mean"
+        max_length = 512  # GROVER 的默认最大长度
+        # 动态检测 hidden_size
+        hidden_size = _infer_embedding_dim(
+            model,
+            layer_name=None,  # GROVER 使用 pool 参数
+            pool=emb_pool,
+            default_dim=768,
+            sample_length=min(512, max_length or 512),
+        )
+    elif model_name == "GenomeOcean-100M" or model_name == "GenomeOcean-500M" or model_name =="GenomeOcean-4B":
+        from models.genomeocean import GenomeOceanModel
+        if model_name == "GenomeOcean-100M":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/GenomeOcean-100M"
+        elif model_name == "GenomeOcean-500M":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/GenomeOcean-500M"
+        elif model_name == "GenomeOcean-4B":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/GenomeOcean-4B"
+        model = GenomeOceanModel(
+            model_name=model_name,
+            model_path=MODEL_DIR)
+        batch_size = 16
+        emb_pool = "mean"
+        max_length = 16384
+        hidden_size = _infer_embedding_dim(
+            model,
+            layer_name=None,
+            pool=emb_pool,
+            default_dim=1024,
+            sample_length=min(512, max_length or 512),
+        )
+    elif model_name == "GENERator-v2-eukaryote-1.2b-base" or model_name == "GENERator-v2-eukaryote-3b-base" or model_name == "GENERator-v2-prokaryote-1.2b-base" or model_name == "GENERator-v2-prokaryote-3b-base":
+        from models.GENERator import GENERatorModel
+        if model_name == "GENERator-v2-eukaryote-1.2b-base":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/GENERator-v2-eukaryote-1.2b-base"
+        elif model_name == "GENERator-v2-eukaryote-3b-base":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/GENERator-v2-eukaryote-3b-base"
+        elif model_name == "GENERator-v2-prokaryote-1.2b-base":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/GENERator-v2-prokaryote-1.2b-base"
+        elif model_name == "GENERator-v2-prokaryote-3b-base":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/GENERator-v2-prokaryote-3b-base"
+        model = GENERatorModel(
+            model_name=model_name,
+            model_path=MODEL_DIR)
+        batch_size = 16
+        emb_pool = "mean"
+        max_length = 16384
+        hidden_size = _infer_embedding_dim(
+            model,
+            layer_name=None,
+            pool=emb_pool,
+            default_dim=1024,
+            sample_length=min(512, max_length or 512),
+        )
+    elif model_name == "BioFM-265M":
+        from models.biofm import BioFMModel
+        MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/BioFM-265M"
+        model = BioFMModel(
+            tokenizer_path=MODEL_DIR,
+            model_path=MODEL_DIR)
+        batch_size = 16
+        emb_pool = "mean"
+        max_length = 16384
+        hidden_size = _infer_embedding_dim(
+            model,
+            layer_name=None,
+            pool=emb_pool,
+            default_dim=1024,
+            sample_length=min(512, max_length or 512),
+        )
+    elif model_name == "AIDO.DNA-300M" or model_name == "AIDO.DNA-7B":
+        from models.aidoDNA import AIDOModel
+        if model_name == "AIDO.DNA-300M":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/AIDO.DNA-300M"
+        elif model_name == "AIDO.DNA-7B":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/AIDO.DNA-7B"
+        REPO_ROOT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model/ModelGenerator" 
+        
+        CODE_DIR = os.path.join(REPO_ROOT, "huggingface", "aido.rna", "aido_rna", "models")
+
+        model = AIDOModel(
+            model_name=model_name,
+            model_path=MODEL_DIR,
+            rnabert_code_path=CODE_DIR,  # <--- 这里传入路径，它就会自己去读了
+            trust_remote_code=True,
+            device="cuda",
+            torch_dtype="auto"
+        )
+        batch_size = 16
+        emb_pool = "mean"
+        max_length = 16384
+        hidden_size = _infer_embedding_dim(
+            model,
+            layer_name=None,
+            pool=emb_pool,
+            default_dim=1024,
+            sample_length=min(512, max_length or 512),
+        )
+    elif model_name == "AIDO.RNA-650M" or model_name == "AIDO.RNA-1.6B" or model_name == "AIDO.RNA-650M-CDS" or model_name == "AIDO.RNA-1.6B-CDS":
+        from models.aidoRNA import AIDORNAModel
+        if model_name == "AIDO.RNA-650M":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/AIDO.RNA-650M"
+        elif model_name == "AIDO.RNA-1.6B":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/AIDO.RNA-1.6B"
+        elif model_name == "AIDO.RNA-650M-CDS":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/AIDO.RNA-650M-CDS"
+        elif model_name == "AIDO.RNA-1.6B-CDS":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/AIDO.RNA-1.6B-CDS"
+        REPO_ROOT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model/ModelGenerator" 
+        CODE_DIR = os.path.join(REPO_ROOT, "huggingface", "aido.rna", "aido_rna", "models")
+        
+        model = AIDORNAModel(
+            model_name=model_name,
+            model_path=MODEL_DIR,
+            rnabert_code_path=CODE_DIR, # 同样需要这个来加载 RNABert 架构
+            trust_remote_code=True,
+            torch_dtype="auto"
+        )
+        batch_size = 16
+        emb_pool = "mean"
+        max_length = 16384
+        hidden_size = _infer_embedding_dim(
+            model,
+            layer_name=None,
+            pool=emb_pool,
+            default_dim=1024,
+            sample_length=min(512, max_length or 512),
+        )
+    elif model_name == "OmniReg-bigbird" or model_name =="OmniReg-base" or model_name == "OmniReg-large":
+        from models.omnireg_model import OmniRegGPTModel
+
+        if model_name == "OmniReg-bigbird":
+            MODEL_CKPT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/gena-lm-bigbird-base-t2t/pytorch_model.bin"
+            TOKENIZER_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/omnireg_bigbird"
+        elif model_name == "OmniReg-base":
+            MODEL_CKPT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/gena-lm-bert-base-t2t/pytorch_model.bin"
+            TOKENIZER_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/gena-lm-bert-base-t2t"
+        elif model_name == "OmniReg-large":
+            MODEL_CKPT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/gena-lm-bert-large-t2t/pytorch_model.bin"
+            TOKENIZER_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/gena-lm-bert-large-t2t"
+        TOKENIZER_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/gena-lm-bert-large-t2t"
+        OMNIREG_REPO = os.path.join(PROJECT_ROOT, "models", "OmniReg-GPT")
+        HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/cache"
+
+        model = OmniRegGPTModel(
+            model_name=model_name,
+            model_path=MODEL_CKPT,
+            tokenizer_path=TOKENIZER_DIR,
+            omnireg_repo_path=OMNIREG_REPO,
+            hf_home=HF_HOME,
+            device=None,
+            max_length=16384,
+        )
+        batch_size = 4
+        emb_pool = "mean"
+        max_length = 16384
+        hidden_size = _infer_embedding_dim(
+            model,
+            layer_name=None,
+            pool=emb_pool,
+            default_dim=1024,
+            sample_length=min(512, max_length or 512),
+        )
+    elif model_name == "RNA-FM":
+        from models.rnafm_model import RNAFMModel
+        MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/rnafm"
+        HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/cache"
+        model = RNAFMModel(
+            model_name=model_name,
+            model_path=MODEL_DIR,
+            hf_home=HF_HOME,
+            device=None,
+        )
+        batch_size = 1
+        emb_pool = "mean"
+        max_length = 1022
+        hidden_size = _infer_embedding_dim(
+            model,
+            layer_name=None,
+            pool=emb_pool,
+            default_dim=640,
+            sample_length=min(512, max_length or 512),
+        )
+    elif model_name == "RiNALMo" or model_name == "RiNALMo-giga":
+        from models.rinalmo_model import RiNALMoModel
+        MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/rinalmo-mega"
+        HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model"
+        model = RiNALMoModel(
+            model_name=model_name,
+            model_path=MODEL_DIR,
+            hf_home=HF_HOME,
+            device=None,
+            use_mlm_head=True,
+        )
+        batch_size = 16
+        emb_pool = "mean"
+        max_length = 1024
+        hidden_size = _infer_embedding_dim(
+            model,
+            layer_name=None,
+            pool=emb_pool,
+            default_dim=1024,
+            sample_length=min(512, max_length or 512),
+        )
+    elif model_name == "BiRNA-BERT":
+        from models.birna_bert import BiRNABERTModel
+        MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/birna-bert"
+        TOKENIZER_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/birna-tokenizer"
+
+    
+        model = BiRNABERTModel(
+            model_name=model_name, 
+            model_path=MODEL_DIR, 
+            tokenizer_path=TOKENIZER_DIR
+        )
+        batch_size = 16
+        emb_pool = "mean"
+        max_length = 16384
+        hidden_size = _infer_embedding_dim(
+            model,
+            layer_name=None,
+            pool=emb_pool,
+            default_dim=1024,
+            sample_length=min(512, max_length or 512),
+        )
+    elif model_name == "RNABERT":
+        from models.rnabert import RNABERTModel
+        MODEL_PATH = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model/bert_mul_2.pth" 
+        CONFIG_PATH = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model/RNABERT/RNA_bert_config.json"
+
+        model = RNABERTModel(
+            model_name=model_name,
+            model_path=MODEL_PATH,
+            config_path=CONFIG_PATH,
+        )
+        batch_size = 16
+        emb_pool = "mean"
+        max_length = 16384
+        hidden_size = _infer_embedding_dim(
+            model,
+            layer_name=None,
+            pool=emb_pool,
+            default_dim=1024,
+            sample_length=min(512, max_length or 512),
+        )
+    elif model_name== "MP-RNA":
+        from models.mp_rna_model import MPRNAModel
+        MODEL_PATH = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/MP-RNA"
+    
+        # 假设你没有单独的 HF_HOME 需求，或者在外部设置好了
+        # 实例化 MP-RNA 模型
+        model = MPRNAModel(
+            model_name="MP-RNA",
+            model_path=MODEL_PATH,
+            trust_remote_code=True # 关键：允许执行模型文件夹里的 Python 代码
+        )
+        batch_size = 16
+        emb_pool = "mean"
+        max_length = 16384
+        hidden_size = _infer_embedding_dim(
+            model,
+            layer_name=None,
+            pool=emb_pool,
+            default_dim=1024,
+            sample_length=min(512, max_length or 512),
+        )
+    elif model_name.startswith("ESM-1b") or model_name == "ESM":
+        from models.esm_model import ESMModel
+        if model_dir:
+            MODEL_PATH = model_dir
+        else:
+            MODEL_PATH = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/esm-1b/esm1b_t33_650M_UR50S.pt"
+
+        model = ESMModel(
+            model_name=model_name,
+            model_path=MODEL_PATH,
+            device=None,
+            translation_mode="first_orf",
+        )
+        batch_size = 16
+        emb_pool = "mean"
+        max_length = 1022
+        hidden_size = _infer_embedding_dim(
+            model,
+            layer_name=None,
+            pool=emb_pool,
+            default_dim=1280,
+            sample_length=min(512, max_length or 512),
+        )
+    elif model_name.startswith("ESM-2") or model_name == "ESM2":
+        from models.esm2_model import ESM2Model
+        if model_dir:
+            MODEL_PATH = model_dir
+        else:
+            MODEL_PATH = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/esm2_t33_650M_UR50D"
+        HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/cache"
+        os.environ["HF_HOME"] = HF_HOME
+
+        model = ESM2Model(
+            model_name=model_name,
+            model_path=MODEL_PATH,
+            device=None,
+            translation_mode="first_orf",
+        )
+        batch_size = 16
+        emb_pool = "mean"
+        max_length = 1024
+        hidden_size = _infer_embedding_dim(
+            model,
+            layer_name=None,
+            pool=emb_pool,
+            default_dim=1280,
+            sample_length=min(512, max_length or 512),
+        )
+    elif model_name in {"physchem-distill", "PhyschemDistill"}:
+        from models import PhyschemDistillModel
+        MODEL_DIR = model_dir or os.path.join(
+            PROJECT_ROOT, "models", "Physchem-distill")
+        model = PhyschemDistillModel(
+            model_name="physchem-distill",
+            model_path=MODEL_DIR,
+            device=None,
+            score_reduce="mean",
+        )
+        batch_size = 128
+        emb_pool = "mean"
+        max_length = model.max_length
+        hidden_size = getattr(getattr(model, "config", None), "d_model", 128)
+        hidden_size = 21639
+    elif model_name == "CNN":
+        from models.cnn import CNNConfig, GenomeCNN1D
+        cfg = CNNConfig()
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        model = GenomeCNN1D(out_dim=1, cfg=cfg).to(device)
+        batch_size = 256
+        emb_pool = "mean"
+        max_length = None
+        hidden_size = cfg.channels[-1]
+    else:
+        raise ValueError(f"[ERROR] model_name = {model_name} not found")
+
+    if args_hidden_size != 0:
+        hidden_size = args_hidden_size
+    print(f"[INFO] hidden_size = {hidden_size}")
+    if int(window_len) <= 0:
+        raise ValueError("--window_len 必须为正整数（用于切分窗口）")
+
+    # 支持12个子数据集：{na_type}-{label}-{check}
+    # na_type: ALL, DNA, RNA
+    # label: host, taxon
+    # check: genus, times
+    all_list = ["ALL", "DNA", "RNA"]
+    LABELS = ["host", "taxon"]
+    check_list = ["genus", "times"]
+    
+    # 解析数据集名称
+    parts = dataset_name.split("-")
+    if len(parts) == 3:
+        na_type, label, check = parts
+        if na_type not in all_list or label not in LABELS or check not in check_list:
+            raise ValueError(f"[ERROR] 无效的数据集名称: {dataset_name}。格式应为: {{na_type}}-{{label}}-{{check}}，其中 na_type∈{all_list}, label∈{LABELS}, check∈{check_list}")
+    else:
+        raise ValueError(f"[ERROR] 无效的数据集名称: {dataset_name}。格式应为: {{na_type}}-{{label}}-{{check}}，其中 na_type∈{all_list}, label∈{LABELS}, check∈{check_list}")
+
+    # 构建数据集路径
+    split_dir = f"/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/data/all_viral/cls_data/{na_type}/{label}/{check}"
+    
+    # 根据label类型确定标签列
+    if label == "taxon":
+        labels = ["kingdom", "phylum", "class", "order", "family"]
+    elif label == "host":
+        labels = ["host_label"]
+    else:
+        raise ValueError(f"[ERROR] 无效的label类型: {label}")
+
+    print(f"[INFO] Dataset: {dataset_name}")
+    print(f"[INFO] split_dir = {split_dir}")
+    print(f"[INFO] window_len = {int(window_len)}, train_num_windows = {int(train_num_windows)}, eval_num_windows = {int(eval_num_windows)}")
+    
+    base = VirusSplitDatasets(
+        split_dir,
+        label_cols=labels,
+        return_format="dict",
+        attach_sequences=True,
+    )
+    win = base.make_windowed(
+        window_len=int(window_len),
+        train_num_windows=int(train_num_windows),
+        eval_num_windows=int(eval_num_windows),
+        seed=42,
+        return_format="dict",
+    )
+
+    print("[OK] base sizes (train/val/test)="f"{len(base.train)}/{len(base.val)}/{len(base.test)}")
+    print("[OK] windowed sizes (train/val/test)="f"{len(win.train)}/{len(win.val)}/{len(win.test)}")
+    print("[OK] label2id keys:", list(base.label2id.keys()))
+
+    # 多任务输出维度（每个分类层级一个 head）
+    task_dims = {name: len(base.label2id[name]) for name in labels}
+
+    if model_name == "CNN":
+        from models.cnn import CNNConfig, GenomeCNN1D
+        cfg = CNNConfig()
+        device = torch.device(
+            "cuda:0" if torch.cuda.is_available() else "cpu")
+        model = GenomeCNN1D(out_dim=task_dims, cfg=cfg).to(device)
+        hidden_size = cfg.channels[-1]
+        head = model
+        embedder = None
+    else:
+        head = MultiTaskMLPHead(hidden_size, task_dims)
+        embedder = model
+
+    if head_batch_size <= 0:
+        head_batch_size = 4096
+    if emb_batch_size_override > 0:
+        emb_batch_size = emb_batch_size_override
+    else:
+        emb_batch_size = batch_size
+
+    output_dir = os.path.join(
+        results_root, f"Classification/{dataset_name}/{model_name}/{window_len}_{train_num_windows}_{eval_num_windows}/{lr}/")
+    embedding_save_dir= os.path.join(
+        results_root, f"Classification/{dataset_name}/{model_name}/{window_len}_{train_num_windows}_{eval_num_windows}/embeddings/")
+    evaluator = FineTuneSeqEvaluator(
+        embedder=embedder,
+        model=head,
+        train_ds=win.train,
+        val_ds=win.val,
+        test_ds=win.test,
+        output_dir=output_dir,
+        embedding_save_dir=embedding_save_dir,
+        task="multiclass",
+        lr=lr,
+        weight_decay=0.0,
+        num_epochs=300,
+        batch_size=head_batch_size,
+        emb_pool=emb_pool,
+        emb_batch_size=emb_batch_size,
+        emb_layer_name=emb_layer_name,
+        multitask=True,
+        task_names=labels,
+        num_workers=num_workers,
+        early_stopping_patience=early_stopping_patience
+    )
+    summary = evaluator.run()
+    print("[OK] multitask summary:", summary.get("output_dir"))
+
+"""
+
+ssd
+/inspire/ssd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/results
+CNN:evo2
+python script/run_all.py --model_name CNN --dataset_name c2-genus
+evo2_1b_base:evo2
+# evo2
+python script/run_all.py --model_name evo2_1b_base --dataset_name c2-genus
+# evo1
+python script/run_all.py --model_name evo-1-8k-base --dataset_name c2-genus
+# evo1.5
+python script/run_all.py --model_name evo-1.5-8k-base --dataset_name c2-genus
+# hyenadna
+python script/run_all.py --model_name hyenadna-tiny-16k --dataset_name c2-genus
+
+python script/run_all.py --model_name nt-500m-human --dataset_name c1-genus --lr 1e-5
+
+
+"""
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="接收两个参数：model_name 和 dataset_name"
+    )
+    parser.add_argument("--model_name", required=True,
+                        help="模型名称，例如 qwen3-14b")
+    parser.add_argument("--dataset_name", required=True,
+                        help="数据集名称，例如 ceval；传 all 将依次评估所有已支持的数据集")
+    parser.add_argument("--model_dir", required=False,
+                        help="模型路径，Nemotron和HyenaDNA系列模型需要")
+    parser.add_argument(
+        "--hidden_size",
+        type=int,
+        default=0,
+        help="模型隐层维度/embedding 投影维度（正整数），默认 768"
+    )
+    parser.add_argument(
+        "--results_root_name",
+        type=str,
+        default="results",
+        help="结果保存目录名称，默认为 results",
+    )
+    parser.add_argument(
+        "--timing_log_csv",
+        type=str,
+        default=None,
+        help="时间记录CSV文件路径，默认为项目根目录下的 time_log.csv",
+    )
+    parser.add_argument(
+        "--window_len",
+        type=int,
+        default=512,
+        help="序列切分窗口长度（C1 任务使用；val/test 覆盖全部窗口）",
+    )
+    parser.add_argument(
+        "--train_num_windows",
+        type=int,
+        default=8,
+        help="训练集：每条序列随机采样的窗口个数（C1 任务使用；0 表示训练也覆盖全部窗口）",
+    )
+    parser.add_argument(
+        "--eval_num_windows",
+        type=int,
+        default=64,
+        help="验证/测试集：每条序列随机采样的窗口个数（-1 表示全覆盖）",
+    )
+    parser.add_argument(
+        "--lr",
+        type=float,
+        default=1e-4,
+        help="学习率（默认 1e-4）",
+    )
+    parser.add_argument(
+        "--num_workers",
+        type=int,
+        default=8,
+        help="DataLoader 进程数（默认 8）",
+    )
+    parser.add_argument(
+        "--head_batch_size",
+        type=int,
+        default=0,
+        help="分类头训练 batch_size（<=0 使用默认 4096）",
+    )
+    parser.add_argument(
+        "--emb_batch_size",
+        type=int,
+        default=0,
+        help="embedding 提取 batch_size（<=0 使用模型默认）",
+    )
+    parser.add_argument(
+        "--early_stopping_patience",
+        type=int,
+        default=30,
+        help="Early stopping patience（默认 20）",
+    )
+    args = parser.parse_args()
+
+    # 确定结果保存目录
+    results_root_name = args.results_root_name
+
+    run(
+        args.model_name,
+        args.dataset_name,
+        args.model_dir,
+        args.hidden_size,
+        results_root_name,
+        timing_records=None,
+        timing_log_csv=args.timing_log_csv,
+        window_len=args.window_len,
+        train_num_windows=args.train_num_windows,
+        eval_num_windows=args.eval_num_windows,
+        lr=args.lr,
+        num_workers=args.num_workers,
+        early_stopping_patience=args.early_stopping_patience,
+        head_batch_size=args.head_batch_size,
+        emb_batch_size_override=args.emb_batch_size,
+    )
+
+
+if __name__ == "__main__":
+    main()

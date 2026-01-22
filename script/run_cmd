@@ -26,7 +26,32 @@ python script/train_cnn_genome_windows.py --splits_dir /inspire/hdd/project/aisc
 python script/train_cnn_cds_windows.py \
   --splits_dir /inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/data/cds_cls \
   --top_k_cds 3 \
-  --window_len 2048 \
+  --window_len 512 \
   --train_windows_per_seq -1 \
-  --train_windows_per_seq 8 \
   --gpu 0 --amp
+
+python script/train_evo2_genome_windows.py \
+  --splits_dir /inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/data/genome_cls \
+  --evo2_model_name evo2_1b_base \
+  --evo2_model_path /inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/evo2_1b_base/evo2_1b_base.pt \
+  --evo2_layer blocks.20 \
+  --evo2_pool final \
+  --window_len 512 --stride 512 --train_windows_per_seq 8 \
+  --gpu 0 --amp \
+  --epochs 20 --batch_size 16 --eval_batch_size 32 \
+  --save_logits \
+  --cache_rebuild
+
+python script/train_evo2_cds_windows.py \
+  --splits_dir /inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/data/cds_cls \
+  --evo2_model_name evo2_1b_base \
+  --evo2_model_path /inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/evo2_1b_base/evo2_1b_base.pt \
+  --evo2_layer blocks.20 \
+  --gpu 0 --amp \
+  --window_len 512 --stride 512 \
+  --top_k_cds 3 \
+  --train_windows_per_cds 8 \
+  --eval_windows_per_cds -1 \
+  --mlp_hidden 512,128,32 --mlp_dropout 0.3 \
+  --save_logits \
+  --cache_rebuild
