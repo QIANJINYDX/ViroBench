@@ -230,8 +230,8 @@ class GenosModel(BaseModel):
     @torch.no_grad()
     def generate(
         self,
-        prompts: Union[str, List[str]],
-        max_new_tokens: int = 128,
+        prompt_seqs: Union[str, List[str]],
+        n_tokens: int = 128,
         temperature: float = 1.0,
         top_p: float = 0.9,
         top_k: int = 50,
@@ -244,10 +244,10 @@ class GenosModel(BaseModel):
         """
         使用 HuggingFace generate 生成序列（返回：prompt+generated）
         """
-        if isinstance(prompts, str):
-            prompt_list = [prompts]
+        if isinstance(prompt_seqs, str):
+            prompt_list = [prompt_seqs]
         else:
-            prompt_list = list(prompts)
+            prompt_list = list(prompt_seqs)
 
         tok = self.tokenizer
         model = self.model
@@ -271,7 +271,7 @@ class GenosModel(BaseModel):
             attention_mask = enc.get("attention_mask", torch.ones_like(input_ids)).to(device)
 
             gen_kwargs = dict(
-                max_new_tokens=int(max_new_tokens),
+                max_new_tokens=int(n_tokens),
                 do_sample=bool(do_sample),
                 temperature=float(temperature),
                 top_p=float(top_p),
@@ -724,7 +724,7 @@ if __name__ == "__main__":
     print("Embedding shape:", emb.shape)
 
     prompts = ["ATG", "CCG"]
-    gen = m.generate(prompts, max_new_tokens=32, temperature=1.0, top_p=0.9, top_k=50, batch_size=2)
+    gen = m.generate(prompts, n_tokens=32, temperature=1.0, top_p=0.9, top_k=50, batch_size=2)
     print("Generated:", gen)
 
     ppl_list = m.get_ppl(seqs, max_window_tokens=2048, stride=512, batch_size=1, return_details=False)

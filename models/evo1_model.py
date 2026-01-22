@@ -98,6 +98,30 @@ class Evo1Model(BaseModel):
         """加载 Evo-1 模型与分词器（借助你的 Evo 封装）。"""
         if self.hf_home:
             os.environ["HF_HOME"] = self.hf_home  # 与你的测试脚本一致
+        
+        # 修复 transformers 动态模块加载问题
+        # 清理可能损坏的 transformers_modules 缓存，避免 ModuleNotFoundError: No module named 'transformers_modules.evo-1'
+        import shutil
+        import glob
+        cache_base = self.hf_home if self.hf_home else os.path.expanduser("~/.cache")
+        transformers_cache_dir = os.path.join(cache_base, "huggingface", "transformers")
+        if os.path.exists(transformers_cache_dir):
+            # 尝试清理可能损坏的 transformers_modules 缓存
+            transformers_modules_dir = os.path.join(transformers_cache_dir, "transformers_modules")
+            if os.path.exists(transformers_modules_dir):
+                # 清理与当前模型相关的缓存（evo-1 开头的所有缓存）
+                model_cache_pattern = os.path.join(transformers_modules_dir, "evo-1*")
+                for cache_path in glob.glob(model_cache_pattern):
+                    try:
+                        if os.path.isdir(cache_path):
+                            shutil.rmtree(cache_path)
+                            print(f"[Evo1Model] Cleaned corrupted cache: {cache_path}")
+                    except Exception as e:
+                        print(f"[Evo1Model] Warning: Failed to clean cache {cache_path}: {e}")
+        
+        # 设置环境变量，避免 transformers 动态模块加载问题
+        # 强制使用本地配置文件，不尝试动态导入 transformers_modules
+        os.environ["HF_HUB_OFFLINE"] = "1"  # 强制离线模式，只使用本地文件
 
         try:
             from evo import Evo  # 你环境里的 evo 包
@@ -361,7 +385,7 @@ class Evo1Model(BaseModel):
             device=str(dev),
             verbose=int(verbose),
         )
-        return output_seqs, output_scores
+        return output_seqs
 
     @torch.no_grad()
     def get_embedding(

@@ -64,7 +64,7 @@ def evaluate_similarity(ground_truth: str, generated: str) -> Dict[str, float]:
     else:
         metrics["exact_match_acc"] = 0.0
 
-    # 2) 编辑距离（归一化）
+    # # 2) 编辑距离（归一化）
     if len(ground_truth) > 0:
         edit_dist = Levenshtein.distance(ground_truth, generated)
         metrics["edit_distance"] = edit_dist / len(ground_truth)
@@ -381,10 +381,10 @@ class GenEvaluator:
         
         # 小批量测试
 
-        prompt_list = prompt_list[:5]
-        ground_truth_list = ground_truth_list[:5]
-        n_tokens_list = n_tokens_list[:5]
-        valid_indices = valid_indices[:5]
+        # prompt_list = prompt_list[:5]
+        # ground_truth_list = ground_truth_list[:5]
+        # n_tokens_list = n_tokens_list[:5]
+        # valid_indices = valid_indices[:5]
 
         print(f"[{split_name}] Valid sequences: {len(prompt_list)}")
 

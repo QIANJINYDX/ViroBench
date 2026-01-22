@@ -151,10 +151,10 @@ class GenomeOceanModel(BaseModel):
     @torch.no_grad()
     def generate(
         self,
-        prompts: Union[str, List[str]],
+        prompt_seqs: Union[str, List[str]],
         num_return_sequences: int = 1,
         min_new_tokens: int = 0,
-        max_new_tokens: int = 128,
+        n_tokens: int = 128,
         temperature: float = 1.3,
         top_p: float = 0.7,
         top_k: int = -1,
@@ -169,10 +169,10 @@ class GenomeOceanModel(BaseModel):
         if not getattr(self, "can_score", True):
             raise RuntimeError("Model loaded as AutoModel (not CausalLM). Cannot generate.")
 
-        if isinstance(prompts, str):
-            prompt_list = [prompts]
+        if isinstance(prompt_seqs, str):
+            prompt_list = [prompt_seqs]
         else:
-            prompt_list = list(prompts)
+            prompt_list = list(prompt_seqs)
 
         prompt_list = [self._preprocess(p) for p in prompt_list]
 
@@ -196,7 +196,7 @@ class GenomeOceanModel(BaseModel):
         for st in tqdm(range(0, len(expanded), batch_size), desc="GenomeOcean generate"):
             batch_prompts = expanded[st : st + batch_size]
 
-            max_prompt_len = max(1, int(self.max_len) - int(max_new_tokens))
+            max_prompt_len = max(1, int(self.max_len) - int(n_tokens))
 
             # ✅ 关键：return_token_type_ids=False
             enc = self.tokenizer(
@@ -213,7 +213,7 @@ class GenomeOceanModel(BaseModel):
                 enc.pop("token_type_ids", None)
 
             gen_kwargs = dict(
-                max_new_tokens=int(max_new_tokens),
+                max_new_tokens=int(n_tokens),
                 min_new_tokens=int(min_new_tokens),
                 do_sample=bool(do_sample),
                 temperature=float(temperature),
@@ -555,7 +555,7 @@ if __name__ == "__main__":
     gen = m.generate(
         prompts,
         num_return_sequences=2,
-        max_new_tokens=64,
+        n_tokens=64,
         temperature=1.3,
         top_k=-1,
         top_p=0.7,

@@ -48,8 +48,8 @@ id_rsa
 
 # 大型数据集文件夹 (建议将数据放在特定目录下忽略)
 data/
-datasets/
 raw_data/
+script/batch/
 
 # 模型权重文件 (通常几百MB到几GB，GitHub传不上去)
 *.pt

@@ -289,8 +289,8 @@ class GENERatorModel(BaseModel):
     @torch.no_grad()
     def generate(
         self,
-        prompts: Union[str, List[str]],
-        max_new_tokens: int = 256,
+        prompt_seqs: Union[str, List[str]],
+        n_tokens: int = 256,
         do_sample: bool = True,
         temperature: float = 1.0,
         top_p: float = 0.95,
@@ -305,13 +305,13 @@ class GENERatorModel(BaseModel):
         """
         生成序列（Prompt + continuation）
 
-        align_mode 默认用 truncate_left，更贴近官方示例“让长度可被6整除并左截断”的用法。:contentReference[oaicite:1]{index=1}
+        align_mode 默认用 truncate_left，更贴近官方示例"让长度可被6整除并左截断"的用法。:contentReference[oaicite:1]{index=1}
         若你更想保留原始 prompt 前缀，可改为 pad_left。
         """
-        if isinstance(prompts, str):
-            prompt_list = [prompts]
+        if isinstance(prompt_seqs, str):
+            prompt_list = [prompt_seqs]
         else:
-            prompt_list = list(prompts)
+            prompt_list = list(prompt_seqs)
 
         # 预处理：对齐 6-mer
         aligned_prompts = []
@@ -331,7 +331,7 @@ class GENERatorModel(BaseModel):
             enc = self._tokenize(
                 batch,
                 add_special_tokens=False,
-                max_length=max(1, self.max_len - int(max_new_tokens) - 4),
+                max_length=max(1, self.max_len - int(n_tokens) - 4),
                 padding=True,
                 truncation=True,
             )
@@ -343,7 +343,7 @@ class GENERatorModel(BaseModel):
                 input_ids, attention_mask = self._prepend_bos(input_ids, attention_mask)
 
             gen_kwargs = dict(
-                max_new_tokens=int(max_new_tokens),
+                max_new_tokens=int(n_tokens),
                 do_sample=bool(do_sample),
                 temperature=float(temperature),
                 top_p=float(top_p),
@@ -765,7 +765,7 @@ if __name__ == "__main__":
 
     gen = m.generate(
         prompts,
-        max_new_tokens=64,
+        n_tokens=64,
         temperature=0.7,
         top_p=0.95,
         top_k=50,
