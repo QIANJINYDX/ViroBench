@@ -7,40 +7,21 @@ import sys
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-METRICS = ["accuracy", "f1_micro","mcc"]
+# 指标名称将从 all_statistics 中动态提取（所有指标的 mean 值）
+# 不预先定义 METRICS，而是从数据中动态获取
 SUPPORTED_TASKS = {
-    "RNA-taxon-genus": "results/Classification/RNA-taxon-genus",
-    "RNA-taxon-times": "results/Classification/RNA-taxon-times",
-    "RNA-host-genus": "results/Classification/RNA-host-genus",
-    "RNA-host-times": "results/Classification/RNA-host-times",
-    "DNA-taxon-genus": "results/Classification/DNA-taxon-genus",
-    "DNA-taxon-times": "results/Classification/DNA-taxon-times",
-    "DNA-host-genus": "results/Classification/DNA-host-genus",
-    "DNA-host-times": "results/Classification/DNA-host-times",
-    "ALL-taxon-genus": "results/Classification/ALL-taxon-genus",
-    "ALL-taxon-times": "results/Classification/ALL-taxon-times",
-    "ALL-host-genus": "results/Classification/ALL-host-genus",
-    "ALL-host-times": "results/Classification/ALL-host-times",
+    "cds-long": "results/Generate/cds-long",
+    "cds-short": "results/Generate/cds-short",
+    "cds-medium": "results/Generate/cds-medium",
 }
 TASK_ORDER = [
-    "RNA-taxon-genus",
-    "RNA-taxon-times",
-    "RNA-host-genus",
-    "RNA-host-times",
-    "DNA-taxon-genus",
-    "DNA-taxon-times",
-    "DNA-host-genus",
-    "DNA-host-times",
-    "ALL-taxon-genus",
-    "ALL-taxon-times",
-    "ALL-host-genus",
-    "ALL-host-times",
+    "cds-long",
+    "cds-short",
+    "cds-medium",
 ]
 
 # 模型显示顺序（None 表示空行分隔）
 MODEL_ORDER = [
-    "CNN",
-    None,  # 空行
     "evo2_1b_base",
     "evo2_7b_base",
     "evo2_7b",
@@ -51,33 +32,6 @@ MODEL_ORDER = [
     "evo-1-131k-base",
     None,  # 空行
     "evo-1.5-8k-base",
-    None,  # 空行
-    "nt-500m-human",
-    "nt-500m-1000g",
-    "nt-2.5b-1000g",
-    "nt-2.5b-ms",
-    None,  # 空行
-    "ntv2-50m-ms-3kmer",
-    "ntv2-50m-ms",
-    "ntv2-100m-ms",
-    "ntv2-250m-ms",
-    "ntv2-500m-ms",
-    None,  # 空行
-    "ntv3-8m-pre",
-    "ntv3-100m-pre",
-    "ntv3-650m-pre",
-    "ntv3-100m-post",
-    "ntv3-650m-post",
-    None,  # 空行
-    "caduceus-ph",
-    "caduceus-ps",
-    None,  # 空行
-    "DNABERT-3",
-    "DNABERT-4",
-    "DNABERT-5",
-    "DNABERT-6",
-    "DNABERT-S",
-    "DNABERT-2-117M",
     None,  # 空行
     "hyenadna-tiny-16k",
     "hyenadna-tiny-1k",
@@ -94,8 +48,6 @@ MODEL_ORDER = [
     "OmniReg-base",
     "OmniReg-large",
     None,  # 空行
-    "GROVER",
-    None,  # 空行
     "GenomeOcean-100M",
     "GenomeOcean-500M",
     "GenomeOcean-4B",
@@ -104,22 +56,6 @@ MODEL_ORDER = [
     "GENERator-v2-eukaryote-3b-base",
     "GENERator-v2-prokaryote-1.2b-base",
     "GENERator-v2-prokaryote-3b-base",
-    None,  # 空行
-    "BioFM-265M",
-    None,  # 空行
-    "AIDO.DNA-300M",
-    "AIDO.DNA-7B",
-    None,  # 空行
-    "AIDO.RNA-650M",
-    "AIDO.RNA-1.6B",
-    "AIDO.RNA-650M-CDS",
-    "AIDO.RNA-1.6B-CDS",
-    None,  # 空行
-    "RNA-FM",
-    "RiNALMo",
-    "BiRNA-BERT",
-    "RNABERT",
-    "MP-RNA",
 ]
 
 
@@ -128,116 +64,60 @@ def _load_json(path: str) -> dict:
         return json.load(f)
 
 
-def _get_task_names(summary: dict) -> list:
-    task_names = summary.get("training_args", {}).get("task_names")
-    if task_names:
-        return list(task_names)
-    metrics_by_task = summary.get("test_metrics_by_task", {})
-    return list(metrics_by_task.keys())
-
-
 def _extract_metrics(summary: dict) -> dict:
-    metrics_by_task = summary.get("test_metrics_by_task")
-    if metrics_by_task is None:
-        raise KeyError("Missing test_metrics_by_task in finetune_summary.json")
-    task_names = _get_task_names(summary)
+    """从 gen_summary.json 中提取所有指标的 mean 值"""
+    all_statistics = summary.get("all_statistics")
+    if all_statistics is None:
+        raise KeyError("Missing all_statistics in gen_summary.json")
+    
+    # 提取所有指标的 mean 值（排除 count 和 valid_count）
     metrics = {}
-    for task in task_names:
-        task_metrics = metrics_by_task.get(task, {})
-        metrics[task] = {name: task_metrics.get(name) for name in METRICS}
+    for metric_name, metric_data in all_statistics.items():
+        if metric_name in ["count", "valid_count"]:
+            continue  # 跳过 count 和 valid_count
+        if isinstance(metric_data, dict) and "mean" in metric_data:
+            metrics[metric_name] = metric_data["mean"]
+    
     return metrics
 
 
-def _get_model_order_index(model_name: str) -> int:
-    """获取模型在排序列表中的索引，用于排序。不在列表中的模型返回一个很大的数字（排在最后）"""
-    try:
-        idx = MODEL_ORDER.index(model_name)
-        return idx
-    except ValueError:
-        # 不在列表中的模型，排在最后（使用一个很大的数字）
-        return len(MODEL_ORDER) + 1000
-
-
 def _collect_model_rows(results_dir: str) -> tuple:
-    # 第一步：收集所有模型的结果（按模型名称分组）
+    """收集所有模型的结果"""
     model_results = {}  # {model_name: [rows]}
     model_dirs = [
         name for name in os.listdir(results_dir)
-        if os.path.isdir(os.path.join(results_dir, name))
+        if os.path.isdir(os.path.join(results_dir, name)) and not name.startswith(".")
     ]
     
-    task_names = None
+    # 收集所有指标名称（用于确定表头）
+    all_metric_names = set()
+    
     for model_name in model_dirs:
         model_dir = os.path.join(results_dir, model_name)
-        # 遍历配置目录: {window_len}_{train_num_windows}_{eval_num_windows}
-        config_dirs = [
-            name for name in os.listdir(model_dir)
-            if os.path.isdir(os.path.join(model_dir, name)) and not name.startswith(".")
-        ]
-        config_dirs.sort()
+        summary_path = os.path.join(model_dir, "gen_summary.json")
         
-        model_rows = []
-        for config_dir_name in config_dirs:
-            config_dir = os.path.join(model_dir, config_dir_name)
-            # 跳过 embeddings 目录
-            if config_dir_name == "embeddings":
-                continue
-            
-            # 遍历 lr 目录，收集所有学习率的结果
-            lr_dirs = [
-                name for name in os.listdir(config_dir)
-                if os.path.isdir(os.path.join(config_dir, name))
-            ]
-            lr_dirs.sort()
-            
-            # 收集该配置下所有学习率的结果
-            config_lr_results = []  # [(lr_dir_name, row, avg_f1_micro)]
-            
-            for lr_dir_name in lr_dirs:
-                lr_dir = os.path.join(config_dir, lr_dir_name)
-                summary_path = os.path.join(lr_dir, "finetune_summary.json")
-                if not os.path.exists(summary_path):
-                    print(f"[WARN] Missing finetune_summary.json: {summary_path}")
-                    continue
-                
-                try:
-                    summary = _load_json(summary_path)
-                    metrics = _extract_metrics(summary)
-                    if task_names is None:
-                        task_names = _get_task_names(summary)
-                    
-                    # 计算平均 f1_micro（用于选择最佳学习率）
-                    f1_values = []
-                    for task_metrics in metrics.values():
-                        f1_micro = task_metrics.get("f1_micro")
-                        if f1_micro is not None:
-                            f1_values.append(float(f1_micro))
-                    avg_f1_micro = sum(f1_values) / len(f1_values) if f1_values else -1.0
-                    
-                    # 模型名称包含配置信息: model_name/config/lr
-                    model_display_name = f"{model_name}/{config_dir_name}/{lr_dir_name}"
-                    row = {"model": model_display_name, "metrics": metrics}
-                    config_lr_results.append((lr_dir_name, row, avg_f1_micro))
-                except Exception as exc:
-                    print(f"[WARN] Failed to load {summary_path}: {exc}")
-                    continue
-            
-            # 如果有多个学习率，选择 f1_micro 最高的
-            if config_lr_results:
-                if len(config_lr_results) > 1:
-                    # 按 avg_f1_micro 降序排序，选择最高的
-                    config_lr_results.sort(key=lambda x: x[2], reverse=True)
-                    best_lr_row = config_lr_results[0][1]
-                    model_rows.append(best_lr_row)
-                    print(f"[INFO] Model {model_name}/{config_dir_name}: selected best LR (f1_micro={config_lr_results[0][2]:.4f}) from {len(config_lr_results)} learning rates")
-                else:
-                    # 只有一个学习率，直接添加
-                    model_rows.append(config_lr_results[0][1])
+        if not os.path.exists(summary_path):
+            print(f"[WARN] Missing gen_summary.json: {summary_path}")
+            continue
         
-        if model_rows:
-            model_results[model_name] = model_rows
+        try:
+            summary = _load_json(summary_path)
+            metrics = _extract_metrics(summary)
+            
+            # 收集指标名称
+            all_metric_names.update(metrics.keys())
+            
+            # 模型名称直接使用模型名称（没有 config 和 lr 子目录）
+            row = {"model": model_name, "metrics": metrics}
+            
+            if model_name not in model_results:
+                model_results[model_name] = []
+            model_results[model_name].append(row)
+        except Exception as exc:
+            print(f"[WARN] Failed to load {summary_path}: {exc}")
+            continue
     
-    # 第二步：按照 MODEL_ORDER 的顺序输出，遇到 None 时插入空行
+    # 按照 MODEL_ORDER 的顺序输出，遇到 None 时插入空行
     all_rows = []
     for item in MODEL_ORDER:
         if item is None:
@@ -254,38 +134,30 @@ def _collect_model_rows(results_dir: str) -> tuple:
             }
             all_rows.append(placeholder_row)
     
-    # 第三步：添加不在 MODEL_ORDER 中的模型（排在最后）
+    # 添加不在 MODEL_ORDER 中的模型（排在最后）
     for model_name in sorted(model_dirs):
         if model_name not in MODEL_ORDER and model_name in model_results:
             all_rows.extend(model_results[model_name])
 
-    if task_names is None:
-        task_names = []
-    return task_names, all_rows
+    # 返回指标名称列表（排序以便保持一致性）
+    metric_names = sorted(list(all_metric_names))
+    return metric_names, all_rows
 
 
-def _build_header(task_names: list) -> list:
+def _build_header(metric_names: list) -> list:
+    """构建 CSV 表头"""
     header = ["model"]
-    use_prefix = len(task_names) > 1
-    for idx, task in enumerate(task_names):
-        for metric in METRICS:
-            col_name = f"{task}_{metric}" if use_prefix else metric
-            header.append(col_name)
-        if use_prefix and idx != len(task_names) - 1:
-            header.append("")
+    header.extend(metric_names)
     return header
 
 
-def _build_row(task_names: list, row_data: dict) -> list:
+def _build_row(metric_names: list, row_data: dict) -> list:
+    """构建 CSV 行数据"""
     row = [row_data["model"]]
-    use_prefix = len(task_names) > 1
-    for idx, task in enumerate(task_names):
-        task_metrics = row_data["metrics"].get(task, {})
-        for metric in METRICS:
-            value = task_metrics.get(metric)
-            row.append("" if value is None else value)
-        if use_prefix and idx != len(task_names) - 1:
-            row.append("")
+    metrics = row_data.get("metrics", {})
+    for metric_name in metric_names:
+        value = metrics.get(metric_name)
+        row.append("" if value is None else value)
     return row
 
 
@@ -294,9 +166,9 @@ def _build_empty_row(num_cols: int) -> list:
     return [""] * num_cols
 
 
-def _write_csv(output_path: str, task_names: list, rows: list) -> None:
+def _write_csv(output_path: str, metric_names: list, rows: list) -> None:
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    header = _build_header(task_names)
+    header = _build_header(metric_names)
     num_cols = len(header)
     try:
         with open(output_path, "w", newline="", encoding="utf-8") as f:
@@ -307,7 +179,7 @@ def _write_csv(output_path: str, task_names: list, rows: list) -> None:
                     # 空行
                     writer.writerow(_build_empty_row(num_cols))
                 else:
-                    writer.writerow(_build_row(task_names, row_data))
+                    writer.writerow(_build_row(metric_names, row_data))
     except OSError as exc:
         if exc.errno == 122:  # Disk quota exceeded
             raise OSError(f"Disk quota exceeded. Cannot write to: {output_path}")
@@ -317,14 +189,14 @@ def _write_csv(output_path: str, task_names: list, rows: list) -> None:
 
 def _export_task_csv(task: str, output_path: str = None) -> str:
     results_dir = os.path.join(PROJECT_ROOT, SUPPORTED_TASKS[task])
-    task_names, rows = _collect_model_rows(results_dir)
+    metric_names, rows = _collect_model_rows(results_dir)
     if not rows:
         print(f"[WARN] No model results found under: {results_dir}")
         return ""
     if output_path is None:
-        output_path = os.path.join(results_dir, "metrics.csv")
+        output_path = os.path.join(results_dir, "gen_metrics.csv")
     try:
-        _write_csv(output_path, task_names, rows)
+        _write_csv(output_path, metric_names, rows)
         print(f"[INFO] Saved CSV to: {output_path}")
         return output_path
     except OSError as exc:
@@ -337,6 +209,7 @@ def _export_task_csv(task: str, output_path: str = None) -> str:
 
 
 def _export_all_tasks_xlsx(xlsx_path: str) -> int:
+    """导出所有任务到 XLSX 文件"""
     try:
         import pandas as pd
     except Exception as exc:
@@ -500,7 +373,7 @@ def main() -> int:
     # 抑制清理时的错误输出
     _suppress_cleanup_errors()
     
-    parser = argparse.ArgumentParser(description="Load finetune results and export CSV.")
+    parser = argparse.ArgumentParser(description="Load Generate results and export CSV.")
     parser.add_argument(
         "--task",
         required=True,
@@ -516,7 +389,7 @@ def main() -> int:
 
     if args.task == "all":
         if args.output is None:
-            output_path = os.path.join(PROJECT_ROOT, "results", "all_metrics.xlsx")
+            output_path = os.path.join(PROJECT_ROOT, "results", "Generate", "all_gen_metrics.xlsx")
         else:
             output_path = args.output
         return _export_all_tasks_xlsx(output_path)

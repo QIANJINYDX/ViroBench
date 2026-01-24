@@ -10,6 +10,9 @@ import torch
 import pandas as pd
 import time
 from datetime import datetime
+from sklearn.utils.class_weight import compute_class_weight
+import numpy as np
+from collections import Counter
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -161,6 +164,7 @@ def run(
     early_stopping_patience: int = 20,
     head_batch_size: int = 0,
     emb_batch_size_override: int = 0,
+    force_recompute_embeddings: bool = False,
 ) -> None:
     print(f"[INFO] model_name = {model_name}")
     print(f"[INFO] dataset_name = {dataset_name}")
@@ -909,9 +913,131 @@ def run(
     print("[OK] base sizes (train/val/test)="f"{len(base.train)}/{len(base.val)}/{len(base.test)}")
     print("[OK] windowed sizes (train/val/test)="f"{len(win.train)}/{len(win.val)}/{len(win.test)}")
     print("[OK] label2id keys:", list(base.label2id.keys()))
+    
+    # 调试：检查原始数据集的标签分布
+    print("[DEBUG] 检查原始数据集的标签分布...")
+    for task_name in labels:
+        # 检查训练集
+        train_labels_base = []
+        for i in range(min(1000, len(base.train))):  # 只检查前1000个样本以节省时间
+            sample = base.train[i]
+            if isinstance(sample, dict):
+                if "labels" in sample:
+                    labels_val = sample["labels"]
+                    if isinstance(labels_val, np.ndarray):
+                        task_idx = labels.index(task_name)
+                        if task_idx < len(labels_val):
+                            train_labels_base.append(int(labels_val[task_idx]))
+                    elif isinstance(labels_val, (int, np.integer)):
+                        if labels.index(task_name) == 0:
+                            train_labels_base.append(int(labels_val))
+        
+        # 检查验证集
+        val_labels_base = []
+        for i in range(len(base.val)):
+            sample = base.val[i]
+            if isinstance(sample, dict):
+                if "labels" in sample:
+                    labels_val = sample["labels"]
+                    if isinstance(labels_val, np.ndarray):
+                        task_idx = labels.index(task_name)
+                        if task_idx < len(labels_val):
+                            val_labels_base.append(int(labels_val[task_idx]))
+                    elif isinstance(labels_val, (int, np.integer)):
+                        if labels.index(task_name) == 0:
+                            val_labels_base.append(int(labels_val))
+        
+        if train_labels_base:
+            train_unique = len(np.unique(train_labels_base))
+            train_counter = Counter(train_labels_base)
+            print(f"[DEBUG] base_train_{task_name}: n={len(train_labels_base)} (sampled), unique={train_unique}, top5={train_counter.most_common(5)}")
+        if val_labels_base:
+            val_unique = len(np.unique(val_labels_base))
+            val_counter = Counter(val_labels_base)
+            print(f"[DEBUG] base_val_{task_name}: n={len(val_labels_base)}, unique={val_unique}, top5={val_counter.most_common(5)}")
+            if val_unique == 1:
+                print(f"[WARN] base_val_{task_name}: 原始验证集所有标签都相同! label={val_labels_base[0]}")
+                print(f"[WARN] 这会导致MCC=0，因为验证集没有类别多样性。")
+                print(f"[WARN] 建议检查数据划分，确保验证集包含所有类别的样本。")
 
     # 多任务输出维度（每个分类层级一个 head）
     task_dims = {name: len(base.label2id[name]) for name in labels}
+
+    # 计算类别权重以处理样本不平衡问题
+    print("[INFO] 计算类别权重以处理样本不平衡...")
+    class_weights_dict = {}
+    for task_idx, task_name in enumerate(labels):
+        # 从训练数据集中提取该任务的标签
+        train_labels = []
+        for i in range(len(win.train)):
+            sample = win.train[i]
+            if isinstance(sample, dict):
+                # 数据集返回dict格式，标签在"labels"字段中（numpy数组）或单独的列中
+                if "labels" in sample:
+                    labels_val = sample["labels"]
+                    if isinstance(labels_val, np.ndarray):
+                        # 多任务：labels是数组，索引对应任务顺序
+                        if task_idx < len(labels_val):
+                            label_val = labels_val[task_idx]
+                            if isinstance(label_val, (int, np.integer)):
+                                train_labels.append(int(label_val))
+                            elif isinstance(label_val, torch.Tensor):
+                                train_labels.append(int(label_val.item()))
+                    elif isinstance(labels_val, (int, np.integer)):
+                        # 单任务：labels是单个值
+                        if task_idx == 0:
+                            train_labels.append(int(labels_val))
+                # 也尝试从单独的列中获取（如果存在）
+                label_key = f"{task_name}__id"
+                if label_key in sample and not train_labels:
+                    label_val = sample[label_key]
+                    if isinstance(label_val, (int, np.integer)):
+                        train_labels.append(int(label_val))
+                    elif isinstance(label_val, torch.Tensor):
+                        train_labels.append(int(label_val.item()))
+                    elif isinstance(label_val, np.ndarray):
+                        train_labels.append(int(label_val.item()))
+        
+        # 调试：检查提取的标签
+        if train_labels:
+            train_labels_array = np.array(train_labels)
+            unique_labels = np.unique(train_labels_array)
+            print(f"[DEBUG] {task_name}: 提取了 {len(train_labels)} 个标签, 唯一值数量={len(unique_labels)}, 唯一值={unique_labels[:10]}")
+            if len(unique_labels) == 1:
+                print(f"[WARN] {task_name}: 所有训练标签都相同! label={unique_labels[0]}")
+        
+        if train_labels:
+            train_labels_array = np.array(train_labels)
+            # 过滤掉无效标签（-1表示缺失）
+            valid_mask = train_labels_array >= 0
+            if valid_mask.sum() > 0:
+                valid_labels = train_labels_array[valid_mask]
+                # 计算类别权重（使用balanced策略）
+                unique_labels = np.unique(valid_labels)
+                class_weights = compute_class_weight(
+                    'balanced',
+                    classes=unique_labels,
+                    y=valid_labels
+                )
+                # 创建完整的权重向量（包括所有类别，即使某些类别在训练集中没有出现）
+                num_classes = len(base.label2id[task_name])
+                weight_tensor = torch.ones(num_classes, dtype=torch.float32)
+                for idx, label_id in enumerate(unique_labels):
+                    if 0 <= label_id < num_classes:
+                        weight_tensor[label_id] = float(class_weights[idx])
+                
+                class_weights_dict[task_name] = weight_tensor
+                print(f"[INFO] {task_name}: 类别数量={num_classes}, 训练样本数={len(valid_labels)}, 权重范围=[{weight_tensor.min():.3f}, {weight_tensor.max():.3f}]")
+            else:
+                print(f"[WARN] {task_name}: 训练集中没有有效标签，跳过类别权重计算")
+        else:
+            print(f"[WARN] {task_name}: 无法从训练集中提取标签，跳过类别权重计算")
+    
+    # 如果没有多任务，使用单个权重张量；否则使用字典
+    if len(labels) == 1:
+        class_weights = class_weights_dict.get(labels[0], None)
+    else:
+        class_weights = class_weights_dict if class_weights_dict else None
 
     if model_name == "CNN":
         from models.cnn import CNNConfig, GenomeCNN1D
@@ -956,7 +1082,9 @@ def run(
         multitask=True,
         task_names=labels,
         num_workers=num_workers,
-        early_stopping_patience=early_stopping_patience
+        early_stopping_patience=early_stopping_patience,
+        force_recompute_embeddings=force_recompute_embeddings,
+        class_weights=class_weights  # 传入类别权重
     )
     summary = evaluator.run()
     print("[OK] multitask summary:", summary.get("output_dir"))
@@ -975,9 +1103,12 @@ python script/run_all.py --model_name evo-1-8k-base --dataset_name c2-genus
 # evo1.5
 python script/run_all.py --model_name evo-1.5-8k-base --dataset_name c2-genus
 # hyenadna
-python script/run_all.py --model_name hyenadna-tiny-16k --dataset_name c2-genus
+python script/run_all.py --model_name hyenadna-tiny-16k --dataset_name RNA-taxon-genus
 
-python script/run_all.py --model_name nt-500m-human --dataset_name c1-genus --lr 1e-5
+python script/run_all.py --model_name nt-500m-human --dataset_name RNA-taxon-genus
+python script/run_all.py --model_name ntv2-50m-ms --dataset_name DNA-taxon-genus
+
+
 
 
 """
@@ -1037,7 +1168,7 @@ def main():
     parser.add_argument(
         "--num_workers",
         type=int,
-        default=8,
+        default=16,
         help="DataLoader 进程数（默认 8）",
     )
     parser.add_argument(
@@ -1057,6 +1188,12 @@ def main():
         type=int,
         default=30,
         help="Early stopping patience（默认 20）",
+    )
+    parser.add_argument(
+        "--force_recompute_embeddings",
+        type=bool,
+        default=True,
+        help="是否强制重新计算 embedding（忽略缓存）",
     )
     args = parser.parse_args()
 
@@ -1079,6 +1216,7 @@ def main():
         early_stopping_patience=args.early_stopping_patience,
         head_batch_size=args.head_batch_size,
         emb_batch_size_override=args.emb_batch_size,
+        force_recompute_embeddings=args.force_recompute_embeddings,
     )
 
 

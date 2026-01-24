@@ -5,7 +5,7 @@ import glob
 import warnings
 import json
 import math
-from typing import Any, Dict, Optional, List, Tuple, Literal
+from typing import Any, Dict, Optional, List, Tuple, Literal, Union
 
 import numpy as np
 import torch
@@ -18,7 +18,16 @@ from sklearn.metrics import (
 )
 from sklearn.preprocessing import label_binarize
 from tqdm.auto import tqdm
+from collections import Counter
+import numpy as np
 
+def _debug_y(name, y, debug: bool = False):
+    if not debug:
+        return
+    y = np.asarray(y)
+    uniq = np.unique(y)
+    top = Counter(y.tolist()).most_common(5)
+    print(f"[DEBUG] {name}: n={len(y)} unique={len(uniq)} top5={top}")
 
 def _to_numpy(x: torch.Tensor) -> np.ndarray:
     return x.detach().cpu().numpy()
@@ -28,6 +37,7 @@ def _compute_metrics_from_logits(
     logits: np.ndarray,
     labels: np.ndarray,
     task: Literal["binary", "multiclass", "regression"] = "multiclass",
+    debug: bool = False,
 ) -> Dict[str, float]:
     """与之前评估器一致风格的指标聚合。"""
     metrics: Dict[str, float] = {}
@@ -78,6 +88,7 @@ def _compute_metrics_from_logits(
 
     # multiclass
     preds = logits.argmax(axis=-1)
+    
     acc = accuracy_score(labels, preds)
     f1_macro = f1_score(labels, preds, average="macro")
     f1_micro = f1_score(labels, preds, average="micro")
@@ -85,10 +96,25 @@ def _compute_metrics_from_logits(
     prec_macro = precision_score(
         labels, preds, average="macro", zero_division=0)
     rec_macro = recall_score(labels, preds, average="macro", zero_division=0)
+    
+    # 计算MCC，如果所有标签相同则返回0
+    mcc_val = 0.0
+    if labels.size > 0:
+        try:
+            mcc_val = matthews_corrcoef(labels, preds)
+            if np.isnan(mcc_val) or np.isinf(mcc_val):
+                if debug:
+                    print(f"[DEBUG] MCC is NaN/Inf, setting to 0.0")
+                mcc_val = 0.0
+        except Exception as e:
+            if debug:
+                print(f"[DEBUG] Error computing MCC: {e}, setting to 0.0")
+            mcc_val = 0.0
+    
     metrics.update(dict(
         accuracy=acc, f1_macro=f1_macro, f1_micro=f1_micro, f1_weighted=f1_weighted,
         precision_macro=prec_macro, recall_macro=rec_macro,
-        mcc=matthews_corrcoef(labels, preds) if labels.size else 0.0
+        mcc=mcc_val
     ))
     try:
         # softmax 概率用于 AUC(OVR)
@@ -155,7 +181,7 @@ class FineTuneSeqEvaluator:
         num_epochs: int = 100,
         batch_size: int = 128,
         num_workers: int = 0,
-        class_weights: Optional[torch.Tensor] = None,  # CrossEntropy 的权重
+        class_weights: Optional[Union[torch.Tensor, Dict[str, torch.Tensor]]] = None,  # CrossEntropy 的权重（单任务为Tensor，多任务为Dict[task_name, Tensor]）
         # 早停
         early_stopping_patience: int = 5,
         early_stopping_min_delta: float = 1e-4,
@@ -167,6 +193,7 @@ class FineTuneSeqEvaluator:
         # 保存
         save_checkpoints: bool = True,   # 保存最佳头部权重
         embedding_save_dir: Optional[str] = None,  # 预计算 embedding 缓存目录
+        force_recompute_embeddings: bool = False,  # 是否强制重新计算 embedding（忽略缓存）
         seed: int = 2025,
         device: Optional[str] = None,
         # evo2 额外参数（可指定层）
@@ -176,6 +203,8 @@ class FineTuneSeqEvaluator:
         # 多任务分类
         multitask: bool = False,
         task_names: Optional[List[str]] = None,
+        # 调试模式
+        debug: bool = False,
     ):
         super().__init__()
         self.embedder = embedder
@@ -185,6 +214,8 @@ class FineTuneSeqEvaluator:
         self.test_ds = test_ds
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
+        
+        self.debug = debug
 
         self.task = task
         self.lr = lr
@@ -203,6 +234,7 @@ class FineTuneSeqEvaluator:
         self.emb_layer_name = emb_layer_name
         self.save_checkpoints = save_checkpoints
         self.embedding_save_dir = embedding_save_dir
+        self.force_recompute_embeddings = force_recompute_embeddings
         self.seed = seed
         self.device = torch.device(device or (
             "cuda:0" if torch.cuda.is_available() else "cpu"))
@@ -787,7 +819,7 @@ class FineTuneSeqEvaluator:
             if use_chunked and not cache_dir:
                 raise ValueError(
                     "emb_chunk_size>0 requires embedding_save_dir for low-memory mode.")
-            if cache_dir:
+            if cache_dir and not self.force_recompute_embeddings:
                 os.makedirs(cache_dir, exist_ok=True)
                 cache_path = os.path.join(cache_dir, f"{split}_embeddings.pt")
                 if os.path.exists(cache_path):
@@ -831,7 +863,11 @@ class FineTuneSeqEvaluator:
                 if ds is None:
                     continue
                 chunk_dir = os.path.join(self.embedding_save_dir, f"{split}_chunks")
-                if not os.path.isdir(chunk_dir) or not glob.glob(os.path.join(chunk_dir, "chunk_*.pt")):
+                if self.force_recompute_embeddings or not os.path.isdir(chunk_dir) or not glob.glob(os.path.join(chunk_dir, "chunk_*.pt")):
+                    if self.force_recompute_embeddings and os.path.isdir(chunk_dir):
+                        # 删除旧的 chunk 文件
+                        import shutil
+                        shutil.rmtree(chunk_dir)
                     self._extract_embeddings_chunked(ds, split=split, return_full=False)
 
             train_ds = ChunkedEmbeddingDataset(
@@ -872,6 +908,34 @@ class FineTuneSeqEvaluator:
         else:
             teX = teY = teG = None
 
+        # 调试：检查加载的标签分布
+        if self.debug:
+            print("[DEBUG] 检查数据加载器中的标签分布...")
+            if self.multitask:
+                if trY.ndim == 2:
+                    for ti, tname in enumerate(self.task_names or []):
+                        if ti < trY.shape[1]:
+                            task_labels = trY[:, ti].numpy()
+                            valid_task_labels = task_labels[task_labels >= 0]
+                            if len(valid_task_labels) > 0:
+                                _debug_y(f"loader_train_{tname}", valid_task_labels, debug=self.debug)
+                if vaY.ndim == 2:
+                    for ti, tname in enumerate(self.task_names or []):
+                        if ti < vaY.shape[1]:
+                            task_labels = vaY[:, ti].numpy()
+                            valid_task_labels = task_labels[task_labels >= 0]
+                            if len(valid_task_labels) > 0:
+                                _debug_y(f"loader_val_{tname}", valid_task_labels, debug=self.debug)
+            else:
+                trY_np = trY.numpy()
+                valid_trY = trY_np[trY_np >= 0] if trY_np.ndim == 1 else trY_np
+                if len(valid_trY) > 0:
+                    _debug_y("loader_train", valid_trY, debug=self.debug)
+                vaY_np = vaY.numpy()
+                valid_vaY = vaY_np[vaY_np >= 0] if vaY_np.ndim == 1 else vaY_np
+                if len(valid_vaY) > 0:
+                    _debug_y("loader_val", valid_vaY, debug=self.debug)
+
         train_loader = DataLoader(TensorDataset(
             trX, trY), batch_size=self.batch_size, shuffle=True,
             drop_last=False, num_workers=self.num_workers)
@@ -906,7 +970,12 @@ class FineTuneSeqEvaluator:
         # multiclass
         cw = None
         if self.class_weights is not None:
-            cw = self.class_weights.to(self.device, dtype=torch.float32)
+            # 单任务：class_weights是Tensor；多任务：是Dict（但多任务不使用此方法）
+            if isinstance(self.class_weights, torch.Tensor):
+                cw = self.class_weights.to(self.device, dtype=torch.float32)
+            elif isinstance(self.class_weights, dict) and self.task_names and len(self.task_names) == 1:
+                # 单任务但传入了字典格式，取第一个任务的权重
+                cw = self.class_weights[self.task_names[0]].to(self.device, dtype=torch.float32)
         return nn.CrossEntropyLoss(weight=cw)
 
     def _run_epoch(self, loader: DataLoader, train: bool) -> Tuple[Any, np.ndarray, Optional[np.ndarray], float]:
@@ -968,7 +1037,13 @@ class FineTuneSeqEvaluator:
                     else:
                         valid = (yb_t >= 0) & (yb_t < logit_t.size(1))
                         if valid.any():
-                            loss_t = nn.CrossEntropyLoss()(
+                            # 支持多任务的类别权重
+                            task_weights = None
+                            if isinstance(self.class_weights, dict) and tname in self.class_weights:
+                                task_weights = self.class_weights[tname].to(self.device, dtype=torch.float32)
+                            elif isinstance(self.class_weights, torch.Tensor) and not self.multitask:
+                                task_weights = self.class_weights.to(self.device, dtype=torch.float32)
+                            loss_t = nn.CrossEntropyLoss(weight=task_weights)(
                                 logit_t[valid], yb_t[valid])
                         else:
                             loss_t = torch.zeros((), device=logit_t.device)
@@ -1005,11 +1080,28 @@ class FineTuneSeqEvaluator:
         labels_np = np.concatenate(
             all_labels, axis=0) if all_labels else np.zeros((0,), dtype=np.int64)
         groups_np = np.concatenate(all_groups, axis=0) if all_groups else None
+        
+        # 调试：检查标签分布
+        split_name = "train" if train else "eval"
         if self.multitask:
             bad = {k: v for k, v in invalid_counts.items() if v > 0}
             if bad:
-                split = "train" if train else "eval"
-                tqdm.write(f"[WARN] {split} invalid labels per task: {bad}")
+                tqdm.write(f"[WARN] {split_name} invalid labels per task: {bad}")
+            # 多任务：检查每个任务的标签
+            if self.debug and labels_np.ndim == 2 and labels_np.shape[1] > 0:
+                for ti, tname in enumerate(self.task_names or []):
+                    if ti < labels_np.shape[1]:
+                        task_labels = labels_np[:, ti]
+                        valid_task_labels = task_labels[task_labels >= 0]
+                        if len(valid_task_labels) > 0:
+                            _debug_y(f"{split_name}_{tname}", valid_task_labels, debug=self.debug)
+        else:
+            # 单任务：检查标签
+            if self.debug and len(labels_np) > 0:
+                valid_labels = labels_np[labels_np >= 0] if labels_np.ndim == 1 else labels_np
+                if len(valid_labels) > 0:
+                    _debug_y(split_name, valid_labels, debug=self.debug)
+        
         return logits_np, labels_np, groups_np, avg_loss
 
     @staticmethod
@@ -1052,7 +1144,7 @@ class FineTuneSeqEvaluator:
                 logits, labels = self._aggregate_by_group_mean(
                     logits, labels, groups)
             task = self.task
-            metrics = _compute_metrics_from_logits(logits, labels, task=task)
+            metrics = _compute_metrics_from_logits(logits, labels, task=task, debug=self.debug)
             # 明细报告（分类任务）
             report = {}
             cm = []
@@ -1088,9 +1180,13 @@ class FineTuneSeqEvaluator:
                 report_by_task[tname] = {}
                 cm_by_task[tname] = []
                 continue
+            # 调试：检查每个任务的标签
+            if len(labels_t) > 0:
+                _debug_y(f"eval_{tname}", labels_t, debug=self.debug)
+            
             task_type = self._infer_task_type_from_logits(logits_t)
             metrics_by_task[tname] = _compute_metrics_from_logits(
-                logits_t, labels_t, task=task_type)
+                logits_t, labels_t, task=task_type, debug=self.debug)
             if task_type != "regression":
                 if logits_t.ndim == 1 or logits_t.shape[1] == 1:
                     preds = (1/(1+np.exp(-logits_t.reshape(-1)))
@@ -1261,6 +1357,7 @@ class FineTuneSeqEvaluator:
                 "emb_batch_size": self.emb_batch_size,
                 "emb_average_rc": self.emb_average_rc,
                 "save_checkpoints": self.save_checkpoints,
+                "force_recompute_embeddings": self.force_recompute_embeddings,
                 "seed": self.seed,
                 "emb_l2norm": self.emb_l2norm,
                 "emb_layer_name": self.emb_layer_name,

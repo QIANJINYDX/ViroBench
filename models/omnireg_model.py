@@ -1168,7 +1168,7 @@ class OmniRegGPTModel(BaseModel):
         add_special_tokens: bool = False,
         clean_spaces: bool = True,
         batch_size: int = 8,
-        return_scores: bool = True,
+        return_scores: bool = False,
     ):
         """
         纯 PyTorch 逐步自回归生成（不依赖 transformers.generate），适配“模型 forward 只吃 input_ids”。

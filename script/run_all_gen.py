@@ -26,6 +26,8 @@ from evaluators.finetune import FineTuneSeqEvaluator
 from datasets.gen_datasets import GenDataset
 from evaluators.gen import GenEvaluator
 
+MODEL_WEIGHT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight"
+DATASET_PATH = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/data/all_viral/gen_data"
 
 def run(
     model_name: str,
@@ -46,35 +48,35 @@ def run(
     
     if model_name == "evo-1-8k-base" or model_name == "evo-1-131k-base" or model_name == "evo-1.5-8k-base":
         from models import Evo1Model
-        MODEL_DIR = f"/mnt/s3mount/model_weight/{model_name}"
-        CFG_PATH = f"/mnt/s3mount/model_weight/{model_name}/{model_name}_inference.yml"
-        HF_HOME = "/mnt/s3mount/model_weight/cache"
+        MODEL_DIR = f"{MODEL_WEIGHT}/{model_name}"
+        CFG_PATH = f"{MODEL_WEIGHT}/{model_name}/{model_name}_inference.yml"
+        HF_HOME = f"{MODEL_WEIGHT}/cache"
         model = Evo1Model(model_name, MODEL_DIR,
                           CFG_PATH, HF_HOME, device=None)
     elif model_name == "evo2_1b_base" or model_name == "evo2_7b_base" or model_name == "evo2_40b_base" or model_name == "evo2_40b" or model_name == "evo2_7b":
         from models import Evo2Model
-        MODEL_DIR = f"/mnt/s3mount/wuyucheng/weight/{model_name}/{model_name}.pt"
+        MODEL_DIR = f"{MODEL_WEIGHT}/{model_name}/{model_name}.pt"
         model = Evo2Model(model_name, MODEL_DIR)
     elif model_name == "hyenadna" or model_name == "hyenadna-tiny-16k" or model_name == "hyenadna-tiny-1k" or model_name == "hyenadna-small-32k" or model_name == "hyenadna-medium-160k" or model_name == "hyenadna-medium-450k" or model_name == "hyenadna-large-1m":
         from models import HyenaDNAModel
-        HF_HOME = "/mnt/s3mount/model_weight/cache"
+        HF_HOME = f"{MODEL_WEIGHT}/cache"
         os.environ["HF_HOME"] = HF_HOME
 
         if model_name == "hyenadna-tiny-16k":
-            MODEL_DIR = "/mnt/s3mount/model_weight/hyenadna-tiny-16k-seqlen-d128-hf"
+            MODEL_DIR = f"{MODEL_WEIGHT}/hyenadna-tiny-16k-seqlen-d128-hf"
         elif model_name == "hyenadna-tiny-1k":
-            MODEL_DIR = "/mnt/s3mount/model_weight/hyenadna-tiny-1k-seqlen-hf"
+            MODEL_DIR = f"{MODEL_WEIGHT}/hyenadna-tiny-1k-seqlen-hf"
         elif model_name == "hyenadna-small-32k":
-            MODEL_DIR = "/mnt/s3mount/model_weight/hyenadna-small-32k-seqlen-hf"
+            MODEL_DIR = f"{MODEL_WEIGHT}/hyenadna-small-32k-seqlen-hf"
         elif model_name == "hyenadna-medium-160k":
-            MODEL_DIR = "/mnt/s3mount/model_weight/hyenadna-medium-160k-seqlen-hf"
+            MODEL_DIR = f"{MODEL_WEIGHT}/hyenadna-medium-160k-seqlen-hf"
         elif model_name == "hyenadna-medium-450k":
-            MODEL_DIR = "/mnt/s3mount/model_weight/hyenadna-medium-450k-seqlen-hf"
+            MODEL_DIR = f"{MODEL_WEIGHT}/hyenadna-medium-450k-seqlen-hf"
         elif model_name == "hyenadna-large-1m":
-            MODEL_DIR = "/mnt/s3mount/model_weight/hyenadna-large-1m-seqlen-hf"
+            MODEL_DIR = f"{MODEL_WEIGHT}/hyenadna-large-1m-seqlen-hf"
 
         # 从路径中提取模型名称（去掉路径前缀和可能的后缀）
-        # 例如: /mnt/s3mount/model_weight/hyenadna-large-1m-seqlen-hf -> hyenadna-large-1m
+        # 例如: {MODEL_WEIGHT}hyenadna-large-1m-seqlen-hf -> hyenadna-large-1m
         model_dir_name = os.path.basename(os.path.normpath(MODEL_DIR))
         # 提取模型名称（去掉 -seqlen-hf 等后缀）
         if "-seqlen-hf" in model_dir_name:
@@ -95,20 +97,20 @@ def run(
         )
     elif model_name == "Genos-1.2B" or model_name == "Genos-10B" or model_name == "Genos-10B-v2":
         from models.genos_model_gen import GenosModel
-        HF_HOME = "/mnt/s3mount/model_weight/cache"
+        HF_HOME = f"{MODEL_WEIGHT}/cache"
         os.environ["HF_HOME"] = HF_HOME
 
         # 设置模型路径
         if model_name == "Genos-1.2B":
-            MODEL_DIR = "/mnt/s3mount/model_weight/Genos-1.2B"
+            MODEL_DIR = f"{MODEL_WEIGHT}/Genos-1.2B"
             default_hidden_size = 1024  # Genos-1.2B 的默认 hidden_size
             batch_size = 16
         elif model_name == "Genos-10B":
-            MODEL_DIR = "/mnt/s3mount/model_weight/Genos-10B"
+            MODEL_DIR = f"{MODEL_WEIGHT}/Genos-10B"
             default_hidden_size = 2048  # Genos-10B 的默认 hidden_size（需要根据实际模型调整）
             batch_size = 8  # 10B 模型更大，使用较小的 batch_size
         elif model_name == "Genos-10B-v2":
-            MODEL_DIR = "/mnt/s3mount/model_weight/Genos-10B-v2/"
+            MODEL_DIR = f"{MODEL_WEIGHT}/Genos-10B-v2/"
             default_hidden_size = 2048  # Genos-10B-V2 的默认 hidden_size（需要根据实际模型调整）
             batch_size = 8  # 10B-V2 模型更大，使用较小的 batch_size
         model = GenosModel(
@@ -121,11 +123,11 @@ def run(
     elif model_name == "GenomeOcean-100M" or model_name == "GenomeOcean-500M" or model_name =="GenomeOcean-4B":
         from models.genomeocean_gen import GenomeOceanModel
         if model_name == "GenomeOcean-100M":
-            MODEL_DIR = "/mnt/s3mount/model_weight/GenomeOcean-100M"
+            MODEL_DIR = f"{MODEL_WEIGHT}/GenomeOcean-100M"
         elif model_name == "GenomeOcean-500M":
-            MODEL_DIR = "/mnt/s3mount/model_weight/GenomeOcean-500M"
+            MODEL_DIR = f"{MODEL_WEIGHT}/GenomeOcean-500M"
         elif model_name == "GenomeOcean-4B":
-            MODEL_DIR = "/mnt/s3mount/model_weight/GenomeOcean-4B"
+            MODEL_DIR = f"{MODEL_WEIGHT}/GenomeOcean-4B"
         model = GenomeOceanModel(
             model_name=model_name,
             model_path=MODEL_DIR)
@@ -133,13 +135,13 @@ def run(
     elif model_name == "GENERator-v2-eukaryote-1.2b-base" or model_name == "GENERator-v2-eukaryote-3b-base" or model_name == "GENERator-v2-prokaryote-1.2b-base" or model_name == "GENERator-v2-prokaryote-3b-base":
         from models.GENERator_gen import GENERatorModel
         if model_name == "GENERator-v2-eukaryote-1.2b-base":
-            MODEL_DIR = "/mnt/s3mount/model_weight/GENERator-v2-eukaryote-1.2b-base"
+            MODEL_DIR = f"{MODEL_WEIGHT}/GENERator-v2-eukaryote-1.2b-base"
         elif model_name == "GENERator-v2-eukaryote-3b-base":
-            MODEL_DIR = "/mnt/s3mount/model_weight/GENERator-v2-eukaryote-3b-base"
+            MODEL_DIR = f"{MODEL_WEIGHT}/GENERator-v2-eukaryote-3b-base"
         elif model_name == "GENERator-v2-prokaryote-1.2b-base":
-            MODEL_DIR = "/mnt/s3mount/model_weight/GENERator-v2-prokaryote-1.2b-base"
+            MODEL_DIR = f"{MODEL_WEIGHT}/GENERator-v2-prokaryote-1.2b-base"
         elif model_name == "GENERator-v2-prokaryote-3b-base":
-            MODEL_DIR = "/mnt/s3mount/model_weight/GENERator-v2-prokaryote-3b-base"
+            MODEL_DIR = f"{MODEL_WEIGHT}/GENERator-v2-prokaryote-3b-base"
         model = GENERatorModel(
             model_name=model_name,
             model_path=MODEL_DIR)
@@ -147,17 +149,17 @@ def run(
         from models.omnireg_model import OmniRegGPTModel
 
         if model_name == "OmniReg-bigbird":
-            MODEL_CKPT = "/mnt/s3mount/model_weight/gena-lm-bigbird-base-t2t/pytorch_model.bin"
-            TOKENIZER_DIR = "/mnt/s3mount/model_weight/omnireg_bigbird"
+            MODEL_CKPT = f"{MODEL_WEIGHT}/gena-lm-bigbird-base-t2t/pytorch_model.bin"
+            TOKENIZER_DIR = f"{MODEL_WEIGHT}/omnireg_bigbird"
         elif model_name == "OmniReg-base":
-            MODEL_CKPT = "/mnt/s3mount/model_weight/gena-lm-bert-base-t2t/pytorch_model.bin"
-            TOKENIZER_DIR = "/mnt/s3mount/model_weight/gena-lm-bert-base-t2t"
+            MODEL_CKPT = f"{MODEL_WEIGHT}/gena-lm-bert-base-t2t/pytorch_model.bin"
+            TOKENIZER_DIR = f"{MODEL_WEIGHT}/gena-lm-bert-base-t2t"
         elif model_name == "OmniReg-large":
-            MODEL_CKPT = "/mnt/s3mount/model_weight/gena-lm-bert-large-t2t/pytorch_model.bin"
-            TOKENIZER_DIR = "/mnt/s3mount/model_weight/gena-lm-bert-large-t2t"
-        TOKENIZER_DIR = "/mnt/s3mount/model_weight/gena-lm-bert-large-t2t"
+            MODEL_CKPT = f"{MODEL_WEIGHT}/gena-lm-bert-large-t2t/pytorch_model.bin"
+            TOKENIZER_DIR = f"{MODEL_WEIGHT}/gena-lm-bert-large-t2t"
+        TOKENIZER_DIR = f"{MODEL_WEIGHT}/gena-lm-bert-large-t2t"
         OMNIREG_REPO = os.path.join(PROJECT_ROOT, "models", "OmniReg-GPT")
-        HF_HOME = "/mnt/s3mount/model_weight/cache"
+        HF_HOME = f"{MODEL_WEIGHT}/cache"
 
         model = OmniRegGPTModel(
             model_name=model_name,
@@ -170,11 +172,11 @@ def run(
         )
 
     if dataset_name == "cds-short":
-        dataset = GenDataset(jsonl_path = "/mnt/shared-storage-user/dnacoding/yedongxin/DNAFM/GeneShield/data/gen_data/cds_gen/short_sequences.jsonl")
+        dataset = GenDataset(jsonl_path = f"{DATASET_PATH}/cds_gen/short_sequences.jsonl")
     elif dataset_name == "cds-medium":
-        dataset = GenDataset(jsonl_path = "/mnt/shared-storage-user/dnacoding/yedongxin/DNAFM/GeneShield/data/gen_data/cds_gen/medium_sequences.jsonl")
+        dataset = GenDataset(jsonl_path = f"{DATASET_PATH}/cds_gen/medium_sequences.jsonl")
     elif dataset_name == "cds-long":
-        dataset = GenDataset(jsonl_path = "/mnt/shared-storage-user/dnacoding/yedongxin/DNAFM/GeneShield/data/gen_data/cds_gen/long_sequences.jsonl")
+        dataset = GenDataset(jsonl_path = f"{DATASET_PATH}/cds_gen/long_sequences.jsonl")
 
     # 生成序列并评估
     # 直接使用 GenDataset，无需适配器（GenEvaluator 已支持 (idx, sequence, taxid) 格式）
@@ -244,9 +246,12 @@ def run(
 """
 python script/run_all_gen.py --model_name evo2_1b_base --dataset_name cds-short
 python script/run_all_gen.py --model_name evo-1-8k-base --dataset_name cds-short
-# python script/run_all_gen.py --model_name evo-1.5-8k-base --dataset_name cds-short
+python script/run_all_gen.py --model_name evo-1.5-8k-base --dataset_name cds-short
 python script/run_all_gen.py --model_name hyenadna-tiny-16k --dataset_name cds-short
 python script/run_all_gen.py --model_name Genos-1.2B --dataset_name cds-short
+python script/run_all_gen.py --model_name OmniReg-base --dataset_name cds-short
+python script/run_all_gen.py --model_name GenomeOcean-100M --dataset_name cds-short
+python script/run_all_gen.py --model_name GENERator-v2-eukaryote-1.2b-base --dataset_name cds-short
 
 """
 
