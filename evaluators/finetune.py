@@ -100,16 +100,42 @@ def _compute_metrics_from_logits(
     # 计算MCC，如果所有标签相同则返回0
     mcc_val = 0.0
     if labels.size > 0:
-        try:
-            mcc_val = matthews_corrcoef(labels, preds)
-            if np.isnan(mcc_val) or np.isinf(mcc_val):
-                if debug:
-                    print(f"[DEBUG] MCC is NaN/Inf, setting to 0.0")
-                mcc_val = 0.0
-        except Exception as e:
+        # 诊断：检查标签和预测的分布
+        unique_labels = np.unique(labels)
+        unique_preds = np.unique(preds)
+        label_counts = np.bincount(labels, minlength=logits.shape[1] if logits.ndim > 1 else 2)
+        pred_counts = np.bincount(preds, minlength=logits.shape[1] if logits.ndim > 1 else 2)
+        
+        # 检查是否所有标签都是同一个类别
+        if len(unique_labels) == 1:
             if debug:
-                print(f"[DEBUG] Error computing MCC: {e}, setting to 0.0")
+                print(f"[DEBUG] MCC=0: All labels are the same (label={unique_labels[0]}, n={len(labels)})")
             mcc_val = 0.0
+        # 检查是否所有预测都是同一个类别
+        elif len(unique_preds) == 1:
+            if debug:
+                print(f"[DEBUG] MCC=0: All predictions are the same (pred={unique_preds[0]}, n={len(preds)})")
+            mcc_val = 0.0
+        else:
+            try:
+                # 捕获警告但不转换为异常，只检查返回值
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", category=RuntimeWarning)
+                    mcc_val = matthews_corrcoef(labels, preds)
+                    
+                # 检查返回值是否为NaN或Inf
+                if np.isnan(mcc_val) or np.isinf(mcc_val):
+                    if debug:
+                        print(f"[DEBUG] MCC is NaN/Inf after calculation, setting to 0.0")
+                        print(f"[DEBUG]   unique_labels={unique_labels}, unique_preds={unique_preds}")
+                        print(f"[DEBUG]   label_counts={label_counts[label_counts>0]}, pred_counts={pred_counts[pred_counts>0]}")
+                    mcc_val = 0.0
+            except Exception as e:
+                if debug:
+                    print(f"[DEBUG] Error computing MCC: {e}, setting to 0.0")
+                    print(f"[DEBUG]   unique_labels={unique_labels}, unique_preds={unique_preds}")
+                    print(f"[DEBUG]   label_counts={label_counts[label_counts>0]}, pred_counts={pred_counts[pred_counts>0]}")
+                mcc_val = 0.0
     
     metrics.update(dict(
         accuracy=acc, f1_macro=f1_macro, f1_micro=f1_micro, f1_weighted=f1_weighted,
@@ -185,6 +211,7 @@ class FineTuneSeqEvaluator:
         # 早停
         early_stopping_patience: int = 5,
         early_stopping_min_delta: float = 1e-4,
+        early_stopping_metric: str = "mcc",  # 早停指标：mcc, accuracy, f1_macro
         # embedding 计算参数
         emb_pool: Literal["final", "mean"] = "final",
         emb_batch_size: int = 128,
@@ -226,6 +253,7 @@ class FineTuneSeqEvaluator:
         self.class_weights = class_weights
         self.early_stopping_patience = early_stopping_patience
         self.early_stopping_min_delta = early_stopping_min_delta
+        self.early_stopping_metric = early_stopping_metric.lower()  # 转换为小写
 
         self.emb_pool = emb_pool
         self.emb_batch_size = emb_batch_size
@@ -1180,6 +1208,21 @@ class FineTuneSeqEvaluator:
                 report_by_task[tname] = {}
                 cm_by_task[tname] = []
                 continue
+            
+            # 诊断：检查过滤后的标签分布
+            invalid_count = (~valid).sum()
+            if invalid_count > 0:
+                tqdm.write(f"[WARN] {tname}: 过滤了 {invalid_count} 个无效标签 (剩余 {len(labels_t)} 个有效样本)")
+            
+            # 检查有效标签的分布
+            if len(labels_t) > 0:
+                unique_labels = np.unique(labels_t)
+                label_counts = np.bincount(labels_t)
+                if len(unique_labels) == 1:
+                    tqdm.write(f"[WARN] {tname}: 过滤后所有标签都相同 (label={unique_labels[0]}, n={len(labels_t)}), MCC将=0")
+                elif len(unique_labels) < 3:
+                    tqdm.write(f"[WARN] {tname}: 过滤后只有 {len(unique_labels)} 个不同标签 (labels={unique_labels}, counts={label_counts[label_counts>0]}), MCC可能很低")
+            
             # 调试：检查每个任务的标签
             if len(labels_t) > 0:
                 _debug_y(f"eval_{tname}", labels_t, debug=self.debug)
@@ -1254,11 +1297,23 @@ class FineTuneSeqEvaluator:
                     row[f"val_mcc_{tname}"] = m.get("mcc")
             per_epoch_rows.append(row)
 
-            # 早停（验证集 MCC）
+            # 早停（根据选择的指标）
             if not self.multitask:
-                cur = val_metrics.get("mcc", -1.0)
+                # 单任务：直接从val_metrics获取
+                metric_key = self.early_stopping_metric
+                if metric_key == "acc":
+                    metric_key = "accuracy"
+                elif metric_key == "f1":
+                    metric_key = "f1_macro"
+                cur = val_metrics.get(metric_key, -1.0)
             else:
-                cur = _mean_metric(val_metrics, "mcc")
+                # 多任务：计算所有任务的平均值
+                metric_key = self.early_stopping_metric
+                if metric_key == "acc":
+                    metric_key = "accuracy"
+                elif metric_key == "f1":
+                    metric_key = "f1_macro"
+                cur = _mean_metric(val_metrics, metric_key)
             improved = (cur is not None) and (
                 cur > best_val_metric + self.early_stopping_min_delta)
             if improved:
@@ -1297,10 +1352,17 @@ class FineTuneSeqEvaluator:
                     f"val_auc_mean={val_auc:.4f}  "
                     f"val_auprc_mean={val_auprc:.4f}"
                 )
+                # 如果MCC很低，输出诊断信息
+                if val_mcc is not None and val_mcc < 0.1 and epoch % 10 == 0:  # 每10个epoch输出一次
+                    tqdm.write(f"[DIAG] MCC很低 (={val_mcc:.4f})，检查各任务的MCC:")
+                    for tname, m in val_metrics.items():
+                        task_mcc = m.get("mcc", None)
+                        if task_mcc is not None:
+                            tqdm.write(f"  {tname}: MCC={task_mcc:.4f}, F1={m.get('f1_macro', 0):.4f}, Acc={m.get('accuracy', 0):.4f}")
 
             if epochs_bad >= self.early_stopping_patience:
                 tqdm.write(
-                    f"[EarlyStop] No improvement in {self.early_stopping_patience} epochs.")
+                    f"[EarlyStop] No improvement in {self.early_stopping_patience} epochs (metric: {self.early_stopping_metric}).")
                 break
 
         # 如需，把最佳权重加载回去再做一次完整版评测
@@ -1346,7 +1408,9 @@ class FineTuneSeqEvaluator:
             "val_size": int(len(self.val_ds)),
             "test_size": (int(len(self.test_ds)) if self.test_ds is not None else None),
             "best_epoch": best_epoch,
-            "best_val_mcc": best_val_metric,
+            "best_val_metric": best_val_metric,
+            "best_val_metric_name": self.early_stopping_metric,
+            "best_val_mcc": best_val_metric if self.early_stopping_metric == "mcc" else None,  # 保持兼容性
             "training_args": {
                 "task": self.task,
                 "lr": self.lr,
@@ -1363,6 +1427,9 @@ class FineTuneSeqEvaluator:
                 "emb_layer_name": self.emb_layer_name,
                 "multitask": self.multitask,
                 "task_names": self.task_names,
+                "early_stopping_patience": self.early_stopping_patience,
+                "early_stopping_min_delta": self.early_stopping_min_delta,
+                "early_stopping_metric": self.early_stopping_metric,
             },
             "label2id_path": label2id_path,
         }

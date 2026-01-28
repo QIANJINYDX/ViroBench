@@ -162,6 +162,7 @@ def run(
     lr: float = 1e-4,
     num_workers: int = 96,
     early_stopping_patience: int = 20,
+    early_stopping_metric: str = "mcc",
     head_batch_size: int = 0,
     emb_batch_size_override: int = 0,
     force_recompute_embeddings: bool = False,
@@ -306,6 +307,80 @@ def run(
         hidden_size = 768
         batch_size = 16
         emb_pool = "mean"
+    elif model_name == "LucaOne-default-step36M" or model_name == "LucaOne-gene-step36.8M":
+        # python script/run_all.py --model_name LucaOne-gene-step36.8M --dataset_name DNA-taxon-genus
+        from models.lucaonce import LucaOneModel
+        if model_name == "LucaOne-default-step36M":
+            CKPT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/LucaOne-default-step36M"
+        elif model_name == "LucaOne-gene-step36.8M":
+            CKPT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/LucaOne-gene-step36.8M"
+        model = LucaOneModel(
+            model_name=model_name,
+            model_path=CKPT,
+            device="cuda" if torch.cuda.is_available() else "cpu",
+            torch_dtype="auto",
+        )
+        # hidden_size = 2560
+        batch_size = 16
+        emb_pool = "mean"
+        hidden_size = _infer_embedding_dim(
+            model,
+            layer_name=None,  # DNABERT 使用 layer_index，但 layer_name 参数会被忽略
+            pool=emb_pool,
+            default_dim=2560,  # DNABERT 的默认 hidden_size
+            sample_length=min(512, max_length or 512),
+        )
+    elif model_name == "LucaVirus-default-step3.8M" or model_name == "LucaVirus-gene-step3.8M":
+        # python script/run_all.py --model_name LucaVirus-default-step3.8M --dataset_name DNA-taxon-genus
+        from models.lucavirus import LucaVirusModel
+        if model_name == "LucaVirus-default-step3.8M":
+            CKPT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/LucaVirus-default-step3.8M"
+        elif model_name == "LucaVirus-gene-step3.8M":
+            CKPT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/LucaVirus-gene-step3.8M"
+        model = LucaVirusModel(
+            model_name="lucavirus-default",
+            model_path=CKPT,
+            device="cuda" if torch.cuda.is_available() else "cpu",
+            torch_dtype="auto",
+            force_download=False,
+        )
+        batch_size = 16
+        emb_pool = "mean"
+        hidden_size = _infer_embedding_dim(
+            model,
+            layer_name=None,  # DNABERT 使用 layer_index，但 layer_name 参数会被忽略
+            pool=emb_pool,
+            default_dim=2560,  # DNABERT 的默认 hidden_size
+            sample_length=min(512, max_length or 512),
+        )
+
+    elif model_name == "gena-lm-bigbird-base-t2t" or model_name == "gena-lm-bert-base-t2t" or model_name == "gena-lm-bert-large-t2t":
+        # python script/run_all.py --model_name gena-lm-bigbird-base-t2t --dataset_name DNA-taxon-genus
+        # python script/run_all.py --model_name gena-lm-bert-base-t2t --dataset_name DNA-taxon-genus
+        # python script/run_all.py --model_name gena-lm-bert-large-t2t --dataset_name DNA-taxon-genus
+        from models.gena_lm import GenaLMModel
+        if model_name == "gena-lm-bigbird-base-t2t":
+            CKPT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/gena-lm-bigbird-base-t2t"
+        elif model_name == "gena-lm-bert-base-t2t":
+            CKPT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/gena-lm-bert-base-t2t"
+        elif model_name == "gena-lm-bert-large-t2t":
+            CKPT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/gena-lm-bert-large-t2t"
+        model = GenaLMModel(
+            model_name="gena-lm",
+            model_path=CKPT,
+            device="cuda" if torch.cuda.is_available() else "cpu",
+            torch_dtype="auto",
+        )
+        # hidden_size = 2560
+        batch_size = 16
+        emb_pool = "mean"
+        hidden_size = _infer_embedding_dim(
+            model,
+            layer_name=None,  # DNABERT 使用 layer_index，但 layer_name 参数会被忽略
+            pool=emb_pool,
+            default_dim=2560,  # DNABERT 的默认 hidden_size
+            sample_length=min(512, max_length or 512),
+        )
     elif model_name == "hyenadna" or model_name == "hyenadna-tiny-16k" or model_name == "hyenadna-tiny-1k" or model_name == "hyenadna-small-32k" or model_name == "hyenadna-medium-160k" or model_name == "hyenadna-medium-450k" or model_name == "hyenadna-large-1m":
         from models import HyenaDNAModel
         HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/cache"
@@ -1053,7 +1128,7 @@ def run(
         embedder = model
 
     if head_batch_size <= 0:
-        head_batch_size = 4096
+        head_batch_size = 64
     if emb_batch_size_override > 0:
         emb_batch_size = emb_batch_size_override
     else:
@@ -1083,6 +1158,7 @@ def run(
         task_names=labels,
         num_workers=num_workers,
         early_stopping_patience=early_stopping_patience,
+        early_stopping_metric=early_stopping_metric,
         force_recompute_embeddings=force_recompute_embeddings,
         class_weights=class_weights  # 传入类别权重
     )
@@ -1097,7 +1173,7 @@ CNN:evo2
 python script/run_all.py --model_name CNN --dataset_name c2-genus
 evo2_1b_base:evo2
 # evo2
-python script/run_all.py --model_name evo2_1b_base --dataset_name c2-genus
+python script/run_all.py --model_name evo2_1b_base --dataset_name DNA-taxon-genus
 # evo1
 python script/run_all.py --model_name evo-1-8k-base --dataset_name c2-genus
 # evo1.5
@@ -1106,11 +1182,9 @@ python script/run_all.py --model_name evo-1.5-8k-base --dataset_name c2-genus
 python script/run_all.py --model_name hyenadna-tiny-16k --dataset_name RNA-taxon-genus
 
 python script/run_all.py --model_name nt-500m-human --dataset_name RNA-taxon-genus
-python script/run_all.py --model_name ntv2-50m-ms --dataset_name DNA-taxon-genus
+python script/run_all.py --model_name nt-2.5b-1000g --dataset_name DNA-taxon-genus
 
-
-
-
+python script/run_all.py --model_name LucaOne-default-step36M --dataset_name DNA-taxon-genus
 """
 
 def main():
@@ -1187,12 +1261,19 @@ def main():
         "--early_stopping_patience",
         type=int,
         default=30,
-        help="Early stopping patience（默认 20）",
+        help="Early stopping patience（默认 30）",
+    )
+    parser.add_argument(
+        "--early_stopping_metric",
+        type=str,
+        default="accuracy",
+        choices=["mcc", "accuracy", "acc", "f1_macro", "f1"],
+        help="早停指标（默认 mcc，可选：mcc, accuracy/acc, f1_macro/f1）",
     )
     parser.add_argument(
         "--force_recompute_embeddings",
         type=bool,
-        default=True,
+        default=False,
         help="是否强制重新计算 embedding（忽略缓存）",
     )
     args = parser.parse_args()
@@ -1214,6 +1295,7 @@ def main():
         lr=args.lr,
         num_workers=args.num_workers,
         early_stopping_patience=args.early_stopping_patience,
+        early_stopping_metric=args.early_stopping_metric,
         head_batch_size=args.head_batch_size,
         emb_batch_size_override=args.emb_batch_size,
         force_recompute_embeddings=args.force_recompute_embeddings,

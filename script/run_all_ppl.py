@@ -215,7 +215,7 @@ python script/run_all_ppl.py --model_name evo2_1b_base --dataset_name genome-sho
 python script/run_all_ppl.py --model_name evo-1-8k-base --dataset_name genome-short
 python script/run_all_ppl.py --model_name evo-1.5-8k-base --dataset_name genome-short
 python script/run_all_ppl.py --model_name hyenadna-tiny-16k --dataset_name genome-short
-python script/run_all_ppl.py --model_name Genos-1.2B --dataset_name genome-short                                ???? char 和 token 对齐
+python script/run_all_ppl.py --model_name Genos-1.2B --dataset_name genome-long
 python script/run_all_ppl.py --model_name OmniReg-bigbird --dataset_name genome-short
 python script/run_all_ppl.py --model_name GENERator-v2-eukaryote-1.2b-base --dataset_name genome-short
 

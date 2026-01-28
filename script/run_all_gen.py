@@ -249,7 +249,7 @@ python script/run_all_gen.py --model_name evo-1-8k-base --dataset_name cds-short
 python script/run_all_gen.py --model_name evo-1.5-8k-base --dataset_name cds-short
 python script/run_all_gen.py --model_name hyenadna-tiny-16k --dataset_name cds-short
 python script/run_all_gen.py --model_name Genos-1.2B --dataset_name cds-short
-python script/run_all_gen.py --model_name OmniReg-base --dataset_name cds-short
+python script/run_all_gen.py --model_name OmniReg-bigbird --dataset_name cds-medium
 python script/run_all_gen.py --model_name GenomeOcean-100M --dataset_name cds-short
 python script/run_all_gen.py --model_name GENERator-v2-eukaryote-1.2b-base --dataset_name cds-short
 

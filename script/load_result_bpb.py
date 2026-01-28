@@ -368,9 +368,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Load BPB results and export CSV.")
     parser.add_argument(
         "--task",
-        required=True,
+        required=False,
+        default="all",
         choices=sorted(list(SUPPORTED_TASKS.keys()) + ["all"]),
-        help="Task name to load (one at a time).",
+        help="Task name to load (one at a time). Default: all",
     )
     parser.add_argument(
         "--output",

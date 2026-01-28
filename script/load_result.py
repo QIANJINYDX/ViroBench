@@ -7,7 +7,6 @@ import sys
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-METRICS = ["accuracy", "f1_micro","mcc"]
 SUPPORTED_TASKS = {
     "RNA-taxon-genus": "results/Classification/RNA-taxon-genus",
     "RNA-taxon-times": "results/Classification/RNA-taxon-times",
@@ -136,16 +135,30 @@ def _get_task_names(summary: dict) -> list:
     return list(metrics_by_task.keys())
 
 
-def _extract_metrics(summary: dict) -> dict:
+def _normalize_metric_name(metric: str) -> str:
+    """规范化指标名称：acc -> accuracy, f1 -> f1_macro"""
+    if metric == "acc":
+        return "accuracy"
+    elif metric == "f1":
+        return "f1_macro"
+    return metric
+
+
+def _extract_metrics(summary: dict, metrics: list) -> dict:
     metrics_by_task = summary.get("test_metrics_by_task")
     if metrics_by_task is None:
         raise KeyError("Missing test_metrics_by_task in finetune_summary.json")
     task_names = _get_task_names(summary)
-    metrics = {}
+    result = {}
     for task in task_names:
         task_metrics = metrics_by_task.get(task, {})
-        metrics[task] = {name: task_metrics.get(name) for name in METRICS}
-    return metrics
+        task_result = {}
+        for metric in metrics:
+            # 查找时使用规范化后的名称，但保存时使用原始名称
+            normalized_metric = _normalize_metric_name(metric)
+            task_result[metric] = task_metrics.get(normalized_metric)
+        result[task] = task_result
+    return result
 
 
 def _get_model_order_index(model_name: str) -> int:
@@ -158,7 +171,7 @@ def _get_model_order_index(model_name: str) -> int:
         return len(MODEL_ORDER) + 1000
 
 
-def _collect_model_rows(results_dir: str) -> tuple:
+def _collect_model_rows(results_dir: str, metric: str = "mcc") -> tuple:
     # 第一步：收集所有模型的结果（按模型名称分组）
     model_results = {}  # {model_name: [rows]}
     model_dirs = [
@@ -202,34 +215,35 @@ def _collect_model_rows(results_dir: str) -> tuple:
                 
                 try:
                     summary = _load_json(summary_path)
-                    metrics = _extract_metrics(summary)
+                    metrics = _extract_metrics(summary, [metric])
                     if task_names is None:
                         task_names = _get_task_names(summary)
                     
-                    # 计算平均 f1_micro（用于选择最佳学习率）
-                    f1_values = []
+                    # 计算平均指标值（用于选择最佳学习率）
+                    normalized_metric = _normalize_metric_name(metric)
+                    metric_values = []
                     for task_metrics in metrics.values():
-                        f1_micro = task_metrics.get("f1_micro")
-                        if f1_micro is not None:
-                            f1_values.append(float(f1_micro))
-                    avg_f1_micro = sum(f1_values) / len(f1_values) if f1_values else -1.0
+                        metric_val = task_metrics.get(metric)
+                        if metric_val is not None:
+                            metric_values.append(float(metric_val))
+                    avg_metric = sum(metric_values) / len(metric_values) if metric_values else -1.0
                     
                     # 模型名称包含配置信息: model_name/config/lr
                     model_display_name = f"{model_name}/{config_dir_name}/{lr_dir_name}"
                     row = {"model": model_display_name, "metrics": metrics}
-                    config_lr_results.append((lr_dir_name, row, avg_f1_micro))
+                    config_lr_results.append((lr_dir_name, row, avg_metric))
                 except Exception as exc:
                     print(f"[WARN] Failed to load {summary_path}: {exc}")
                     continue
             
-            # 如果有多个学习率，选择 f1_micro 最高的
+            # 如果有多个学习率，选择指标值最高的
             if config_lr_results:
                 if len(config_lr_results) > 1:
-                    # 按 avg_f1_micro 降序排序，选择最高的
+                    # 按 avg_metric 降序排序，选择最高的
                     config_lr_results.sort(key=lambda x: x[2], reverse=True)
                     best_lr_row = config_lr_results[0][1]
                     model_rows.append(best_lr_row)
-                    print(f"[INFO] Model {model_name}/{config_dir_name}: selected best LR (f1_micro={config_lr_results[0][2]:.4f}) from {len(config_lr_results)} learning rates")
+                    print(f"[INFO] Model {model_name}/{config_dir_name}: selected best LR ({metric}={config_lr_results[0][2]:.4f}) from {len(config_lr_results)} learning rates")
                 else:
                     # 只有一个学习率，直接添加
                     model_rows.append(config_lr_results[0][1])
@@ -261,31 +275,33 @@ def _collect_model_rows(results_dir: str) -> tuple:
 
     if task_names is None:
         task_names = []
-    return task_names, all_rows
+    
+    # 收集未运行的模型（在MODEL_ORDER中但不在model_results中）
+    missing_models = []
+    for item in MODEL_ORDER:
+        if item is not None and item not in model_results:
+            missing_models.append(item)
+    
+    return task_names, all_rows, missing_models
 
 
-def _build_header(task_names: list) -> list:
+def _build_header(task_names: list, metrics: list) -> list:
     header = ["model"]
     use_prefix = len(task_names) > 1
-    for idx, task in enumerate(task_names):
-        for metric in METRICS:
+    for task in task_names:
+        for metric in metrics:
             col_name = f"{task}_{metric}" if use_prefix else metric
             header.append(col_name)
-        if use_prefix and idx != len(task_names) - 1:
-            header.append("")
     return header
 
 
-def _build_row(task_names: list, row_data: dict) -> list:
+def _build_row(task_names: list, row_data: dict, metrics: list) -> list:
     row = [row_data["model"]]
-    use_prefix = len(task_names) > 1
-    for idx, task in enumerate(task_names):
+    for task in task_names:
         task_metrics = row_data["metrics"].get(task, {})
-        for metric in METRICS:
+        for metric in metrics:
             value = task_metrics.get(metric)
             row.append("" if value is None else value)
-        if use_prefix and idx != len(task_names) - 1:
-            row.append("")
     return row
 
 
@@ -294,9 +310,9 @@ def _build_empty_row(num_cols: int) -> list:
     return [""] * num_cols
 
 
-def _write_csv(output_path: str, task_names: list, rows: list) -> None:
+def _write_csv(output_path: str, task_names: list, rows: list, metrics: list) -> None:
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    header = _build_header(task_names)
+    header = _build_header(task_names, metrics)
     num_cols = len(header)
     try:
         with open(output_path, "w", newline="", encoding="utf-8") as f:
@@ -307,7 +323,7 @@ def _write_csv(output_path: str, task_names: list, rows: list) -> None:
                     # 空行
                     writer.writerow(_build_empty_row(num_cols))
                 else:
-                    writer.writerow(_build_row(task_names, row_data))
+                    writer.writerow(_build_row(task_names, row_data, metrics))
     except OSError as exc:
         if exc.errno == 122:  # Disk quota exceeded
             raise OSError(f"Disk quota exceeded. Cannot write to: {output_path}")
@@ -315,17 +331,48 @@ def _write_csv(output_path: str, task_names: list, rows: list) -> None:
             raise
 
 
-def _export_task_csv(task: str, output_path: str = None) -> str:
+def _export_missing_models_csv(missing_models: list, output_path: str) -> str:
+    """导出未运行模型的CSV文件"""
+    if not missing_models:
+        return ""
+    
+    try:
+        with open(output_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["model"])  # 只有一列：模型名称
+            for model in missing_models:
+                writer.writerow([model])
+        print(f"[INFO] Saved missing models CSV to: {output_path}")
+        return output_path
+    except OSError as exc:
+        if "Disk quota exceeded" in str(exc):
+            print(f"[ERROR] {exc}")
+        else:
+            print(f"[ERROR] Failed to write missing models CSV file: {exc}")
+        return ""
+
+
+def _export_task_csv(task: str, metric: str = "mcc", output_path: str = None) -> str:
     results_dir = os.path.join(PROJECT_ROOT, SUPPORTED_TASKS[task])
-    task_names, rows = _collect_model_rows(results_dir)
+    task_names, rows, missing_models = _collect_model_rows(results_dir, metric)
     if not rows:
         print(f"[WARN] No model results found under: {results_dir}")
+        # 即使没有结果，也尝试导出未运行的模型列表
+        if missing_models:
+            missing_path = os.path.join(results_dir, f"missing_models.csv")
+            _export_missing_models_csv(missing_models, missing_path)
         return ""
     if output_path is None:
-        output_path = os.path.join(results_dir, "metrics.csv")
+        output_path = os.path.join(results_dir, f"metrics_{metric}.csv")
     try:
-        _write_csv(output_path, task_names, rows)
+        _write_csv(output_path, task_names, rows, [metric])
         print(f"[INFO] Saved CSV to: {output_path}")
+        
+        # 同时导出未运行的模型列表
+        if missing_models:
+            missing_path = os.path.join(results_dir, f"missing_models.csv")
+            _export_missing_models_csv(missing_models, missing_path)
+        
         return output_path
     except OSError as exc:
         if "Disk quota exceeded" in str(exc):
@@ -336,7 +383,7 @@ def _export_task_csv(task: str, output_path: str = None) -> str:
         return ""
 
 
-def _export_all_tasks_xlsx(xlsx_path: str) -> int:
+def _export_all_tasks_xlsx(xlsx_path: str, metric: str = "mcc") -> int:
     try:
         import pandas as pd
     except Exception as exc:
@@ -345,24 +392,49 @@ def _export_all_tasks_xlsx(xlsx_path: str) -> int:
 
     os.makedirs(os.path.dirname(xlsx_path), exist_ok=True)
     csv_paths = {}
+    missing_models_by_task = {}  # {task: [missing_models]}
+    
+    # 收集所有任务的未运行模型
     for task in TASK_ORDER:
-        csv_path = _export_task_csv(task)
+        results_dir = os.path.join(PROJECT_ROOT, SUPPORTED_TASKS[task])
+        if os.path.exists(results_dir):
+            _, _, missing_models = _collect_model_rows(results_dir, metric)
+            if missing_models:
+                missing_models_by_task[task] = missing_models
+        
+        csv_path = _export_task_csv(task, metric)
         if csv_path:
             csv_paths[task] = csv_path
 
-    if not csv_paths:
-        print("[WARN] No CSV files generated.")
+    if not csv_paths and not missing_models_by_task:
+        print("[WARN] No CSV files generated and no missing models found.")
         return 1
 
     writer = None
     try:
         writer = pd.ExcelWriter(xlsx_path)
+        
+        # 写入每个任务的结果
         for task in TASK_ORDER:
             csv_path = csv_paths.get(task)
             if not csv_path:
                 continue
             df = pd.read_csv(csv_path)
             df.to_excel(writer, sheet_name=task, index=False)
+        
+        # 写入未运行模型的汇总表
+        if missing_models_by_task:
+            missing_data = []
+            for task in TASK_ORDER:
+                missing_models = missing_models_by_task.get(task, [])
+                if missing_models:
+                    for model in missing_models:
+                        missing_data.append({"task": task, "model": model})
+            
+            if missing_data:
+                missing_df = pd.DataFrame(missing_data)
+                missing_df.to_excel(writer, sheet_name="missing_models", index=False)
+                print(f"[INFO] Found {len(missing_data)} missing model entries across {len(missing_models_by_task)} tasks")
         
         # 手动关闭，避免在 with 语句退出时出错
         # ExcelWriter 的 close() 方法会自动保存
@@ -503,9 +575,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Load finetune results and export CSV.")
     parser.add_argument(
         "--task",
-        required=True,
+        required=False,
+        default="all",
         choices=sorted(list(SUPPORTED_TASKS.keys()) + ["all"]),
-        help="Task name to load (one at a time).",
+        help="Task name to load (one at a time). Default: all",
+    )
+    parser.add_argument(
+        "--metric",
+        type=str,
+        default="accuracy",
+        choices=["mcc", "accuracy", "acc", "f1_macro", "f1"],
+        help="指标名称（默认 mcc，可选：mcc, accuracy/acc, f1_macro/f1）",
     )
     parser.add_argument(
         "--output",
@@ -514,14 +594,17 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    # 规范化指标名称
+    metric = _normalize_metric_name(args.metric)
+
     if args.task == "all":
         if args.output is None:
-            output_path = os.path.join(PROJECT_ROOT, "results", "all_metrics.xlsx")
+            output_path = os.path.join(PROJECT_ROOT, "results", f"all_metrics_{metric}.xlsx")
         else:
             output_path = args.output
-        return _export_all_tasks_xlsx(output_path)
+        return _export_all_tasks_xlsx(output_path, metric)
 
-    _export_task_csv(args.task, args.output)
+    _export_task_csv(args.task, metric, args.output)
     return 0
 
 
