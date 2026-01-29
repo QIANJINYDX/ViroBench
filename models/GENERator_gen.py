@@ -290,7 +290,7 @@ class GENERatorModel(BaseModel):
     def generate(
         self,
         prompt_seqs: Union[str, List[str]],
-        n_tokens: int = 256,
+        n_tokens: int = 1536,  # 注意：此参数实际表示碱基数，不是 token 数
         do_sample: bool = True,
         temperature: float = 1.0,
         top_p: float = 0.95,
@@ -305,9 +305,21 @@ class GENERatorModel(BaseModel):
         """
         生成序列（Prompt + continuation）
 
-        align_mode 默认用 truncate_left，更贴近官方示例"让长度可被6整除并左截断"的用法。:contentReference[oaicite:1]{index=1}
+        参数:
+            n_tokens: 要生成的碱基数（注意：虽然参数名为 n_tokens，但实际传入的是碱基数）
+                    - 由于 GENERator 使用 6-mer tokenization，1 个 token = 6 个碱基
+                    - 如果碱基数能被 6 整除，则实际 token 数 = 碱基数 // 6
+                    - 如果不能整除，则实际 token 数 = 碱基数 // 6 + 1（向上取整）
+                    - 例如：传入 6 -> 1 token, 传入 7 -> 2 tokens, 传入 12 -> 2 tokens, 传入 13 -> 3 tokens
+
+        align_mode 默认用 truncate_left，更贴近官方示例"让长度可被6整除并左截断"的用法。
         若你更想保留原始 prompt 前缀，可改为 pad_left。
         """
+        # 将传入的碱基数（虽然参数名为 n_tokens）转换为真正的 token 数
+        # 公式：(n_bases + 5) // 6 等价于向上取整到最近的 6 的倍数对应的 token 数
+        n_bases = n_tokens  # 传入的 n_tokens 实际是碱基数
+        actual_n_tokens = (n_bases + 5) // 6
+        
         if isinstance(prompt_seqs, str):
             prompt_list = [prompt_seqs]
         else:
@@ -327,11 +339,11 @@ class GENERatorModel(BaseModel):
         for st in tqdm(range(0, len(aligned_prompts), batch_size), desc="GENERator generate"):
             batch = aligned_prompts[st: st + batch_size]
 
-            # 注意：官方示例用 add_special_tokens=False，并手动 prepend BOS。:contentReference[oaicite:2]{index=2}
+            # 注意：官方示例用 add_special_tokens=False，并手动 prepend BOS。
             enc = self._tokenize(
                 batch,
                 add_special_tokens=False,
-                max_length=max(1, self.max_len - int(n_tokens) - 4),
+                max_length=max(1, self.max_len - int(actual_n_tokens) - 4),
                 padding=True,
                 truncation=True,
             )
@@ -343,7 +355,7 @@ class GENERatorModel(BaseModel):
                 input_ids, attention_mask = self._prepend_bos(input_ids, attention_mask)
 
             gen_kwargs = dict(
-                max_new_tokens=int(n_tokens),
+                max_new_tokens=int(actual_n_tokens),
                 do_sample=bool(do_sample),
                 temperature=float(temperature),
                 top_p=float(top_p),
@@ -765,7 +777,7 @@ if __name__ == "__main__":
 
     gen = m.generate(
         prompts,
-        n_tokens=64,
+        n_tokens=384,  # 传入 384 个碱基，内部会转换为 64 个 token (384 / 6 = 64)
         temperature=0.7,
         top_p=0.95,
         top_k=50,
