@@ -166,6 +166,7 @@ def run(
     head_batch_size: int = 0,
     emb_batch_size_override: int = 0,
     force_recompute_embeddings: bool = False,
+    save_predictions: bool = False,
 ) -> None:
     print(f"[INFO] model_name = {model_name}")
     print(f"[INFO] dataset_name = {dataset_name}")
@@ -432,6 +433,27 @@ def run(
             default_dim=256,
             sample_length=min(512, max_length or 512),
         )
+    elif "hyena_local" in model_name:
+        from models.hyenadna_local import HyenaDNALocal
+        if "hyena_local" == model_name:
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_hg38_hf"
+        elif model_name == "hyena_local-12M-mini-virus":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-12M-mini-virus"
+        model = HyenaDNALocal(
+            model_dir=MODEL_DIR,
+            device="cuda",
+            pretrain_root="/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna",
+        )
+        batch_size = 64
+        emb_pool = "final"
+        max_length = 160000
+        hidden_size = _infer_embedding_dim_hyenadna(
+            model,
+            pool=emb_pool,
+            default_dim=256,
+            sample_length=min(512, max_length or 512),
+        )
+
     elif model_name == "nt-500m-human" or model_name == "nt-500m-1000g" or model_name == "nt-2.5b-1000g" or model_name == "nt-2.5b-ms" or model_name == "ntv2-50m-ms-3kmer" or model_name == "ntv2-50m-ms" or model_name == "ntv2-100m-ms" or model_name == "ntv2-250m-ms" or model_name == "ntv2-500m-ms":
         from models import NucleotideTransformerModel
         HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/cache"
@@ -467,7 +489,7 @@ def run(
         )
 
         batch_size = 16
-        emb_pool = "final"
+        emb_pool = "cls"
         max_length = 6000
         # 动态检测 hidden_size（NucleotideTransformer 使用专门的检测函数，因为不支持 layer_name 参数）
         hidden_size = _infer_embedding_dim_nucleotide_transformer(
@@ -1148,7 +1170,7 @@ def run(
         embedding_save_dir=embedding_save_dir,
         task="multiclass",
         lr=lr,
-        weight_decay=0.0,
+        weight_decay=0.01,
         num_epochs=300,
         batch_size=head_batch_size,
         emb_pool=emb_pool,
@@ -1160,7 +1182,8 @@ def run(
         early_stopping_patience=early_stopping_patience,
         early_stopping_metric=early_stopping_metric,
         force_recompute_embeddings=force_recompute_embeddings,
-        class_weights=class_weights  # 传入类别权重
+        class_weights=class_weights,  # 传入类别权重
+        save_predictions=save_predictions,  # 是否保存预测结果
     )
     summary = evaluator.run()
     print("[OK] multitask summary:", summary.get("output_dir"))
@@ -1179,12 +1202,19 @@ python script/run_all.py --model_name evo-1-8k-base --dataset_name c2-genus
 # evo1.5
 python script/run_all.py --model_name evo-1.5-8k-base --dataset_name c2-genus
 # hyenadna
-python script/run_all.py --model_name hyenadna-tiny-16k --dataset_name RNA-taxon-genus
+python script/run_all.py --model_name hyena_local --dataset_name RNA-taxon-genus
 
-python script/run_all.py --model_name nt-500m-human --dataset_name RNA-taxon-genus
+python script/run_all.py --model_name hyena_local-12M-mini-virus --dataset_name RNA-taxon-genus
+
+
 python script/run_all.py --model_name nt-2.5b-1000g --dataset_name DNA-taxon-genus
 
-python script/run_all.py --model_name LucaOne-default-step36M --dataset_name DNA-taxon-genus
+python script/run_all.py --model_name LucaOne-default-step36M --dataset_name DNA-taxon-genus --save_predictions True
+
+python script/run_all.py --model_name LucaVirus-default-step3.8M --dataset_name ALL-taxon-genus --save_predictions True
+
+# 快速测试
+python script/run_all.py --model_name nt-500m-human --dataset_name DNA-taxon-genus --force_recompute_embeddings True --train_num_windows 2 --eval_num_windows 4
 """
 
 def main():
@@ -1276,6 +1306,12 @@ def main():
         default=False,
         help="是否强制重新计算 embedding（忽略缓存）",
     )
+    parser.add_argument(
+        "--save_predictions",
+        type=bool,
+        default=False,
+        help="是否保存预测结果",
+    )
     args = parser.parse_args()
 
     # 确定结果保存目录
@@ -1299,6 +1335,7 @@ def main():
         head_batch_size=args.head_batch_size,
         emb_batch_size_override=args.emb_batch_size,
         force_recompute_embeddings=args.force_recompute_embeddings,
+        save_predictions=args.save_predictions,
     )
 
 

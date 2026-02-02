@@ -1,5 +1,5 @@
 # models/__init__.py
-__all__ = ["Evo1Model", "CaduceusModel", "DNABERTModel", "DNABERT2Model", "DNABERTSModel", "HyenaDNAModel", "NucleotideTransformerModel", "Evo2Model", "NemotronHModel", "NemotronHModelTT", "NemotronHMSAModel", "GPNMSAOriginalModel", "HyenaDNAFineTuner", "Heads", "MLPHead", "GPNMSAModel", "GenosModel", "GROVERModel", "GPNBrassicalesModel", "OmniRegGPTModel", "RNAFMModel", "RiNALMoModel", "ESMModel", "ESM2Model", "PhyschemDistillModel", "NemotronPoETStructv2Model"]
+__all__ = ["Evo1Model", "CaduceusModel", "DNABERTModel", "DNABERT2Model", "DNABERTSModel", "HyenaDNAModel", "HyenaDNALocal", "NucleotideTransformerModel", "Evo2Model", "NemotronHModel", "NemotronHModelTT", "NemotronHMSAModel", "GPNMSAOriginalModel", "HyenaDNAFineTuner", "Heads", "MLPHead", "GPNMSAModel", "GenosModel", "GROVERModel", "GPNBrassicalesModel", "OmniRegGPTModel", "RNAFMModel", "RiNALMoModel", "ESMModel", "ESM2Model", "PhyschemDistillModel", "NemotronPoETStructv2Model"]
 
 def __getattr__(name):
     if name == "Evo1Model":
@@ -20,6 +20,9 @@ def __getattr__(name):
     if name == "HyenaDNAModel":
         from .hyenadna_model import HyenaDNAModel
         return HyenaDNAModel
+    if name == "HyenaDNALocal":
+        from .hyenadna_local import HyenaDNALocal
+        return HyenaDNALocal
     if name == "NucleotideTransformerModel":
         from .nucleotide_transformer_model import NucleotideTransformerModel
         return NucleotideTransformerModel

@@ -25,6 +25,10 @@ class NucleotideTransformerModel(BaseModel):
 
     - embed_sequences: 提取最后一层隐藏态并池化（mean/max/cls）
     - score_sequences: 伪对数似然 PLL（逐位 [MASK]，需要 MLM 头）
+    
+    注意：Nucleotide Transformer 使用 k-mer 编码（通常为 6-mer，某些版本为 3-mer）。
+    tokenizer 已内置 k-mer 编码逻辑，直接对原始 DNA 序列调用 tokenizer.encode() 即可，
+    无需像 DNABERT 那样手动将序列转换为空格分隔的 k-mer 文本。
     """
 
     def __init__(
@@ -88,10 +92,20 @@ class NucleotideTransformerModel(BaseModel):
             self.mask_id = mid if isinstance(mid, int) and mid >= 0 else None
 
         self.model_max_len = getattr(self.tokenizer, "model_max_length", None)
+        
+        # 验证 tokenizer 的编码方式（k-mer vs character-level）
+        test_seq = "ACGTACGT"
+        test_tokens = self.tokenizer.tokenize(test_seq)
+        test_token_count = len(self.tokenizer.encode(test_seq, add_special_tokens=False))
+        is_kmer = test_token_count < len(test_seq)
+        tokenization_type = "k-mer" if is_kmer else "character-level"
+        
         print(f"[NT] loaded on {self.device} | device_map={self.device_map} | "
               f"dtype={self.torch_dtype} | max_len={self.model_max_len} | "
               f"accepts(attn={self._accepts_attn}, enc_attn={self._accepts_enc_attn}, "
               f"return_dict={self._accepts_ret}, hidden={self._accepts_hidden}) | mask_id={self.mask_id}")
+        print(f"[NT] tokenization: {tokenization_type} (test: '{test_seq}' -> {test_token_count} tokens, "
+              f"vocab_size={self.tokenizer.vocab_size})")
 
     def score_sequences(self, sequences: List[str], batch_size: int = 256) -> List[float]:
         """
@@ -153,14 +167,18 @@ class NucleotideTransformerModel(BaseModel):
         return scores
     
     def _prepare_batch(self, sequences: List[str]):
-        """分词和批处理"""
+        """
+        分词和批处理
+        
+        注意：Nucleotide Transformer 的 tokenizer 内置 k-mer 编码（通常为 6-mer），
+        直接对原始 DNA 序列调用 tokenizer.encode() 即可，tokenizer 会自动进行 k-mer 分词。
+        """
         seq_lengths = [len(seq) for seq in sequences]
         
-        # 使用 tokenizer 编码
+        # 使用 tokenizer 编码（tokenizer 内置 k-mer 编码逻辑）
         all_token_ids = []
         for seq in sequences:
-            # tokens_ids = self.tokenizer.batch_encode_plus(sequences, return_tensors="pt", padding="max_length", max_length = max_length)["input_ids"]
-
+            # tokenizer 会自动将原始序列转换为 k-mer tokens（如 6-mer）
             token_ids = self.tokenizer.encode(seq, add_special_tokens=False)
             all_token_ids.append(token_ids)
         # Padding 到相同长度
@@ -244,7 +262,8 @@ class NucleotideTransformerModel(BaseModel):
             batch = sequences[st: st + batch_size]
 
             # 编码（按 max_length 右侧 padding/truncation，参考官方实现）
-            # 注意：参考代码没有指定 add_special_tokens，使用默认值
+            # 注意：tokenizer 内置 k-mer 编码（通常为 6-mer），直接对原始序列编码即可
+            # 参考代码没有指定 add_special_tokens，使用默认值
             enc = self.tokenizer.batch_encode_plus(
                 batch,
                 return_tensors="pt",

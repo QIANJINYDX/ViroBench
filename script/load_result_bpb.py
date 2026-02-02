@@ -86,10 +86,10 @@ def _collect_model_rows(results_dir: str) -> tuple:
     
     for model_name in model_dirs:
         model_dir = os.path.join(results_dir, model_name)
-        summary_path = os.path.join(model_dir, "bpb_summary.json")
+        summary_path = os.path.join(model_dir, "bpb_summary_new.json")
         
         if not os.path.exists(summary_path):
-            print(f"[WARN] Missing bpb_summary.json: {summary_path}")
+            print(f"[WARN] Missing bpb_summary_new.json: {summary_path}")
             continue
         
         try:

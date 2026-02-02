@@ -535,12 +535,21 @@ def _export_all_per_sample_jsonl(output_path: str) -> int:
                         if all_equal:
                             generated_sequence = generated_full
                         else:
-                            generated_sequence = generated_continuation  # 默认使用 generated_continuation
+                            if model_name == "evo-1.5-8k-base":
+                                generated_sequence = generated_full
+                            else:
+                                generated_sequence = generated_continuation  # 默认使用 generated_continuation
                         
-                        # 检查 ground_truth 和生成序列的长度是否相等
+                        # 截断逻辑：如果生成的序列长度超过 ground_truth，则截断到 ground_truth 的长度
                         gt_len = len(ground_truth) if ground_truth else 0
                         gen_len = len(generated_sequence) if generated_sequence else 0
                         
+                        if gt_len > 0 and gen_len > gt_len:
+                            # 截断到 ground_truth 的长度
+                            generated_sequence = generated_sequence[:gt_len]
+                            gen_len = gt_len  # 更新长度
+                        
+                        # 检查 ground_truth 和生成序列的长度是否相等（截断后）
                         if gt_len != gen_len:
                             length_mismatches.append({
                                 "model_name": model_name,
@@ -560,12 +569,12 @@ def _export_all_per_sample_jsonl(output_path: str) -> int:
                             "prompt": sample.get("prompt"),
                             "ground_truth": ground_truth,
                             "generated_sequence": generated_sequence,
-                            "exact_match_acc": sample.get("exact_match_acc"),
-                            "edit_distance": sample.get("edit_distance"),
-                            "alignment_identity": sample.get("alignment_identity"),
-                            "kmer_KS": sample.get("kmer_KS"),
-                            "kmer_JSD": sample.get("kmer_JSD"),
-                            "kmer_EMD": sample.get("kmer_EMD"),
+                            # "exact_match_acc": sample.get("exact_match_acc"),
+                            # "edit_distance": sample.get("edit_distance"),
+                            # "alignment_identity": sample.get("alignment_identity"),
+                            # "kmer_KS": sample.get("kmer_KS"),
+                            # "kmer_JSD": sample.get("kmer_JSD"),
+                            # "kmer_EMD": sample.get("kmer_EMD"),
                             "group": group,
                         }
                         

@@ -92,3 +92,5 @@ script/Generation_analysis.ipynb
 script/load_gen_result_split.py
 script/load_result_gen.py
 script/load_result_gen.py
+script/plots
+pretrain

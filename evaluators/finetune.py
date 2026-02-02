@@ -20,6 +20,7 @@ from sklearn.preprocessing import label_binarize
 from tqdm.auto import tqdm
 from collections import Counter
 import numpy as np
+import pandas as pd
 
 def _debug_y(name, y, debug: bool = False):
     if not debug:
@@ -232,6 +233,8 @@ class FineTuneSeqEvaluator:
         task_names: Optional[List[str]] = None,
         # 调试模式
         debug: bool = False,
+        # 保存预测结果
+        save_predictions: bool = False,  # 是否保存预测结文件
     ):
         super().__init__()
         self.embedder = embedder
@@ -270,6 +273,7 @@ class FineTuneSeqEvaluator:
         self.emb_l2norm = emb_l2norm
         self.multitask = multitask
         self.task_names = list(task_names) if task_names is not None else None
+        self.save_predictions = save_predictions
         self._train_batch_sampler = None
 
         torch.manual_seed(self.seed)
@@ -1164,8 +1168,253 @@ class FineTuneSeqEvaluator:
         group_labels = l[idx_start]
         return mean_logits, group_labels
 
-    def _eval_split(self, loader: DataLoader) -> Tuple[Any, Any, Any]:
+    def _get_label2id(self) -> Dict[str, Any]:
+        """获取label2id映射"""
+        if hasattr(self.train_ds, "get_label_map"):
+            return self.train_ds.get_label_map()  # type: ignore
+        elif hasattr(self.train_ds, "label2id"):
+            return getattr(self.train_ds, "label2id")
+        elif hasattr(getattr(self.train_ds, "base", None), "label2id"):
+            return getattr(getattr(self.train_ds, "base"), "label2id")
+        return {}
+
+    def _collect_metadata(self, loader: DataLoader, groups: Optional[np.ndarray]) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+        """
+        从数据集中收集 taxid 和 first_release_date
+        
+        Returns:
+            (taxids, first_release_dates): 两个数组，如果无法获取则返回 None
+        """
+        try:
+            dataset = loader.dataset
+            taxids_list = []
+            first_release_dates_list = []
+            
+            # 检查是否是 windowed dataset
+            base_dataset = None
+            if hasattr(dataset, 'base'):
+                base_dataset = dataset.base
+            elif hasattr(dataset, 'dataset') and hasattr(dataset.dataset, 'base'):
+                base_dataset = dataset.dataset.base
+            
+            # 获取基础数据集（包含原始 DataFrame）
+            if base_dataset is not None and hasattr(base_dataset, 'df'):
+                df = base_dataset.df
+                has_first_release = 'first_release_date' in df.columns
+                
+                # 遍历数据集收集信息
+                for idx in range(len(dataset)):
+                    try:
+                        item = dataset[idx]
+                        if isinstance(item, dict):
+                            seq_index = item.get('seq_index')
+                            if seq_index is not None and seq_index < len(df):
+                                taxid = df.iloc[seq_index]['taxid']
+                                first_release_date = df.iloc[seq_index].get('first_release_date', None) if has_first_release else None
+                                taxids_list.append(taxid)
+                                first_release_dates_list.append(first_release_date)
+                            else:
+                                taxids_list.append(None)
+                                first_release_dates_list.append(None)
+                        else:
+                            # tuple 格式，尝试从 base dataset 获取
+                            if hasattr(dataset, '_flat_index') and idx < len(dataset._flat_index):
+                                seq_index, _ = dataset._flat_index[idx]
+                                if seq_index < len(df):
+                                    taxid = df.iloc[seq_index]['taxid']
+                                    first_release_date = df.iloc[seq_index].get('first_release_date', None) if has_first_release else None
+                                    taxids_list.append(taxid)
+                                    first_release_dates_list.append(first_release_date)
+                                else:
+                                    taxids_list.append(None)
+                                    first_release_dates_list.append(None)
+                            else:
+                                taxids_list.append(None)
+                                first_release_dates_list.append(None)
+                    except Exception as e:
+                        tqdm.write(f"[WARN] 获取索引 {idx} 的元数据失败: {e}")
+                        taxids_list.append(None)
+                        first_release_dates_list.append(None)
+                
+                # 如果有 groups，需要聚合（取每个 group 的第一个，与 _aggregate_by_group_mean 保持一致）
+                if groups is not None and len(taxids_list) > 0:
+                    groups_np = np.array(groups)
+                    # 使用与 _aggregate_by_group_mean 相同的排序逻辑
+                    order = np.argsort(groups_np, kind="mergesort")
+                    g = groups_np[order]
+                    taxids_ordered = [taxids_list[i] for i in order]
+                    first_release_dates_ordered = [first_release_dates_list[i] for i in order]
+                    
+                    uniq, idx_start = np.unique(g, return_index=True)
+                    # 取每个 group 的第一个元素
+                    taxids_agg = [taxids_ordered[idx_start[i]] for i in range(len(uniq))]
+                    first_release_dates_agg = [first_release_dates_ordered[idx_start[i]] for i in range(len(uniq))]
+                    return np.array(taxids_agg), np.array(first_release_dates_agg)
+                else:
+                    return np.array(taxids_list), np.array(first_release_dates_list)
+        except Exception as e:
+            tqdm.write(f"[WARN] 收集元数据失败: {e}")
+            return None, None
+        
+        return None, None
+
+    def _save_predictions_to_csv(
+        self,
+        logits: Any,
+        labels: np.ndarray,
+        preds: Optional[np.ndarray],
+        split_name: str,
+        task_names: Optional[List[str]] = None,
+        taxids: Optional[np.ndarray] = None,
+        first_release_dates: Optional[np.ndarray] = None,
+    ):
+        """
+        保存预测结果到CSV文件
+        
+        Args:
+            logits: 模型输出的logits（单任务为np.ndarray，多任务为Dict[str, np.ndarray]）
+            labels: 真实标签（单任务为1D数组，多任务为2D数组 [N, num_tasks]）
+            preds: 预测类别（单任务时提供，多任务时从logits计算）
+            split_name: 数据集名称（"train", "val", "test"）
+            task_names: 任务名称列表（多任务时使用）
+        """
+        label2id = self._get_label2id()
+        rows = []
+        
+        if not self.multitask:
+            # 单任务
+            if preds is None:
+                if logits.ndim == 1 or logits.shape[1] == 1:
+                    preds = (1/(1+np.exp(-logits.reshape(-1))) >= 0.5).astype(np.int64)
+                else:
+                    preds = logits.argmax(axis=-1)
+            
+            # 计算概率
+            if logits.ndim == 1 or logits.shape[1] == 1:
+                probs = 1 / (1 + np.exp(-logits.reshape(-1)))
+            else:
+                e = np.exp(logits - logits.max(axis=1, keepdims=True))
+                probs = e / e.sum(axis=1, keepdims=True)
+                probs = probs[np.arange(len(preds)), preds]
+            
+            # 获取类别名称
+            id2label = {}
+            if isinstance(label2id, dict) and len(label2id) > 0:
+                if isinstance(list(label2id.values())[0], dict):
+                    # 多任务格式但单任务使用
+                    task_name = list(label2id.keys())[0]
+                    id2label = {v: k for k, v in label2id[task_name].items()}
+                else:
+                    id2label = {v: k for k, v in label2id.items()}
+            
+            for i in range(len(labels)):
+                true_id = int(labels[i])
+                pred_id = int(preds[i])
+                true_label = id2label.get(true_id, f"class_{true_id}")
+                pred_label = id2label.get(pred_id, f"class_{pred_id}")
+                confidence = float(probs[i])
+                
+                row = {
+                    "true_label_id": true_id,
+                    "true_label": true_label,
+                    "predicted_label_id": pred_id,
+                    "predicted_label": pred_label,
+                    "confidence": confidence,
+                }
+                # 添加 taxid 和 first_release_date
+                if taxids is not None and i < len(taxids):
+                    row["taxid"] = taxids[i] if taxids[i] is not None else ""
+                else:
+                    row["taxid"] = ""
+                if first_release_dates is not None and i < len(first_release_dates):
+                    row["first_release_date"] = first_release_dates[i] if first_release_dates[i] is not None else ""
+                else:
+                    row["first_release_date"] = ""
+                
+                rows.append(row)
+        else:
+            # 多任务
+            if task_names is None:
+                task_names = self.task_names or []
+            
+            # 计算每个任务的预测和概率
+            preds_by_task = {}
+            probs_by_task = {}
+            for tname in task_names:
+                if tname in logits:
+                    logit_t = logits[tname]
+                    if logit_t.ndim == 1 or logit_t.shape[1] == 1:
+                        preds_by_task[tname] = (1/(1+np.exp(-logit_t.reshape(-1))) >= 0.5).astype(np.int64)
+                        probs_by_task[tname] = 1 / (1 + np.exp(-logit_t.reshape(-1)))
+                    else:
+                        preds_by_task[tname] = logit_t.argmax(axis=-1)
+                        e = np.exp(logit_t - logit_t.max(axis=1, keepdims=True))
+                        prob_t = e / e.sum(axis=1, keepdims=True)
+                        probs_by_task[tname] = prob_t[np.arange(len(preds_by_task[tname])), preds_by_task[tname]]
+            
+            # 获取每个任务的id2label映射
+            id2label_by_task = {}
+            if isinstance(label2id, dict):
+                for tname in task_names:
+                    if tname in label2id:
+                        id2label_by_task[tname] = {v: k for k, v in label2id[tname].items()}
+            
+            # 构建行数据
+            num_samples = len(labels)
+            for i in range(num_samples):
+                row = {}
+                for ti, tname in enumerate(task_names):
+                    if ti < labels.shape[1]:
+                        true_id = int(labels[i, ti])
+                        if tname in preds_by_task and i < len(preds_by_task[tname]):
+                            pred_id = int(preds_by_task[tname][i])
+                            confidence = float(probs_by_task[tname][i])
+                            
+                            # 获取类别名称
+                            id2label = id2label_by_task.get(tname, {})
+                            true_label = id2label.get(true_id, f"class_{true_id}")
+                            pred_label = id2label.get(pred_id, f"class_{pred_id}")
+                            
+                            row[f"{tname}_true_label_id"] = true_id
+                            row[f"{tname}_true_label"] = true_label
+                            row[f"{tname}_predicted_label_id"] = pred_id
+                            row[f"{tname}_predicted_label"] = pred_label
+                            row[f"{tname}_confidence"] = confidence
+                
+                # 添加 taxid 和 first_release_date
+                if taxids is not None and i < len(taxids):
+                    row["taxid"] = taxids[i] if taxids[i] is not None else ""
+                else:
+                    row["taxid"] = ""
+                if first_release_dates is not None and i < len(first_release_dates):
+                    row["first_release_date"] = first_release_dates[i] if first_release_dates[i] is not None else ""
+                else:
+                    row["first_release_date"] = ""
+                
+                rows.append(row)
+        
+        # 保存到CSV
+        if rows:
+            df = pd.DataFrame(rows)
+            csv_path = os.path.join(self.output_dir, f"{split_name}_predictions.csv")
+            df.to_csv(csv_path, index=False, encoding='utf-8')
+            tqdm.write(f"[INFO] 预测结果已保存到: {csv_path} (共 {len(rows)} 条记录)")
+
+    def _eval_split(self, loader: DataLoader, split_name: str = "eval") -> Tuple[Any, Any, Any]:
+        """
+        评估单个数据集
+        
+        Args:
+            loader: 数据加载器
+            split_name: 数据集名称（"train", "val", "test"），用于保存预测结果时的文件名
+        """
         logits, labels, groups, _ = self._run_epoch(loader, train=False)
+        
+        # 收集 taxid 和 first_release_date（用于保存预测结果）
+        taxids = None
+        first_release_dates = None
+        if self.save_predictions and split_name == "test":
+            taxids, first_release_dates = self._collect_metadata(loader, groups)
         if not self.multitask:
             # 若是 windowed val/test：按 seq_index 聚合到 sequence-level
             if groups is not None:
@@ -1185,11 +1434,46 @@ class FineTuneSeqEvaluator:
                 report = classification_report(
                     labels, preds, digits=4, output_dict=True, zero_division=0)
                 cm = confusion_matrix(labels, preds).tolist()
+                
+                # 保存预测结果到CSV（仅测试集）
+                if self.save_predictions and split_name == "test":
+                    self._save_predictions_to_csv(
+                        logits, labels, preds, split_name, task_names=None,
+                        taxids=taxids, first_release_dates=first_release_dates
+                    )
+            
             return metrics, report, cm
 
         metrics_by_task: Dict[str, Any] = {}
         report_by_task: Dict[str, Any] = {}
         cm_by_task: Dict[str, Any] = {}
+        
+        # 先聚合所有任务的logits和labels（用于保存预测结果）
+        logits_agg = {}
+        labels_agg = None
+        if groups is not None:
+            # 需要聚合
+            for ti, tname in enumerate(self.task_names or []):
+                logits_t = logits[tname]
+                labels_t = labels[:, ti]
+                logits_t_agg, labels_t_agg = self._aggregate_by_group_mean(
+                    logits_t, labels_t, groups)
+                logits_agg[tname] = logits_t_agg
+                if labels_agg is None:
+                    labels_agg = np.zeros((len(labels_t_agg), len(self.task_names or [])), dtype=labels.dtype)
+                labels_agg[:, ti] = labels_t_agg
+        else:
+            # 不需要聚合，直接使用
+            logits_agg = logits
+            labels_agg = labels
+        
+        # 保存预测结果（仅测试集，在过滤之前，保存所有样本）
+        if self.save_predictions and split_name == "test":
+            self._save_predictions_to_csv(
+                logits_agg, labels_agg, None, split_name, task_names=self.task_names,
+                taxids=taxids, first_release_dates=first_release_dates
+            )
+        
         for ti, tname in enumerate(self.task_names or []):
             logits_t = logits[tname]
             labels_t = labels[:, ti]
@@ -1239,6 +1523,7 @@ class FineTuneSeqEvaluator:
                 report_by_task[tname] = classification_report(
                     labels_t, preds, digits=4, output_dict=True, zero_division=0)
                 cm_by_task[tname] = confusion_matrix(labels_t, preds).tolist()
+        
         return metrics_by_task, report_by_task, cm_by_task
 
     # ---------- 主流程 ----------
@@ -1272,7 +1557,7 @@ class FineTuneSeqEvaluator:
             _, _, _, train_loss = self._run_epoch(train_loader, train=True)
 
             # eval (val only; test is run once after training)
-            val_metrics, _, _ = self._eval_split(val_loader)
+            val_metrics, _, _ = self._eval_split(val_loader, split_name="val")
             test_metrics = None
 
             # 记录
@@ -1372,10 +1657,10 @@ class FineTuneSeqEvaluator:
                 self.output_dir, "best_head.pt"))
 
         # 4) 结束后：完整版报告（使用最佳权重）
-        val_metrics, val_report, val_cm = self._eval_split(val_loader)
+        val_metrics, val_report, val_cm = self._eval_split(val_loader, split_name="val")
         test_metrics = test_report = test_cm = None
         if test_loader is not None:
-            test_metrics, test_report, test_cm = self._eval_split(test_loader)
+            test_metrics, test_report, test_cm = self._eval_split(test_loader, split_name="test")
 
         # 标签映射保存
         label2id_path = os.path.join(self.output_dir, "label2id.json")
@@ -1466,14 +1751,37 @@ class FineTuneSeqEvaluator:
                     "test_confusion_matrix": test_cm,
                 })
         else:
+            # 多任务：按任务保存的同时，计算各任务指标平均值并保存
+            def _avg_over_tasks(metrics_by_task: Dict[str, Dict[str, Any]], prefix: str) -> Dict[str, Any]:
+                if not metrics_by_task:
+                    return {}
+                keys_to_avg = [
+                    "accuracy", "f1_macro", "f1_micro", "f1_weighted",
+                    "precision_macro", "recall_macro", "auc_macro_ovr", "mcc",
+                    "auprc", "auprc_macro_ovr",
+                ]
+                out = {}
+                for k in keys_to_avg:
+                    vals = [m.get(k) for m in metrics_by_task.values() if m.get(k) is not None]
+                    if vals:
+                        out[f"{prefix}_{k}"] = float(np.mean(vals))
+                # 与单任务一致：auprc 优先用 auprc，否则 auprc_macro_ovr
+                if f"{prefix}_auprc" not in out and f"{prefix}_auprc_macro_ovr" in out:
+                    out[f"{prefix}_auprc"] = out[f"{prefix}_auprc_macro_ovr"]
+                return out
+
+            val_metrics_avg = _avg_over_tasks(val_metrics, "val")
             summary.update({
                 "val_metrics_by_task": val_metrics,
+                "val_metrics_avg": val_metrics_avg,
                 "val_classification_report_by_task": val_report,
                 "val_confusion_matrix_by_task": val_cm,
             })
             if test_metrics is not None:
+                test_metrics_avg = _avg_over_tasks(test_metrics, "test")
                 summary.update({
                     "test_metrics_by_task": test_metrics,
+                    "test_metrics_avg": test_metrics_avg,
                     "test_classification_report_by_task": test_report,
                     "test_confusion_matrix_by_task": test_cm,
                 })

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import List, Optional, Literal, Union, Dict
 import os
+import sys
 import numpy as np
 import torch
 from transformers import AutoModel, AutoTokenizer
@@ -39,6 +40,12 @@ class LucaVirusModel(BaseModel):
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = torch.device(device)
+
+        # 将模型路径添加到 sys.path，以便 transformers 能够正确导入自定义模块
+        # 这对于包含特殊字符（如连字符和点号）的模型路径很重要
+        model_path_abs = os.path.abspath(self.model_path)
+        if model_path_abs not in sys.path:
+            sys.path.insert(0, model_path_abs)
 
         self.tokenizer = AutoTokenizer.from_pretrained(
             self.model_path,

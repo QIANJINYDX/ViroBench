@@ -102,6 +102,69 @@ def create_protenix_input(sequence, name, count=1):
     ]
 
 
+def build_af3_inputs_from_jsonl(jsonl_path=None, output_dir=None):
+    """
+    Build AlphaFold3 input files from JSONL (e.g. all_gen_per_sample_metrics.jsonl).
+    Only processes lines where is_CDS is True.
+    For each row: original CDS = ground_truth, generated CDS = prompt + generated_sequence.
+    Outputs both _truth and _gen for each sample.
+    """
+    if jsonl_path is None:
+        jsonl_path = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/results/Generate/all_gen_per_sample_metrics.jsonl"
+    if output_dir is None:
+        output_dir = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/results/af3/input"
+    
+    os.makedirs(output_dir, exist_ok=True)
+    count = 0
+    
+    with open(jsonl_path, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as e:
+                print(f"Skip invalid JSONL line: {e}")
+                continue
+            
+            if not row.get("is_CDS", False):
+                continue
+            
+            ground_truth = row.get("ground_truth", "")
+            prompt = row.get("prompt", "")
+            generated_sequence = row.get("generated_sequence", "")
+            if not ground_truth or (not prompt and not generated_sequence):
+                continue
+            
+            cds_gen = prompt + generated_sequence
+            model_name = row.get("model_name", "unknown")
+            taxid = row.get("taxid", "")
+            sequence_index = row.get("sequence_index", count)
+            
+            try:
+                protein_truth = cds_to_protein(ground_truth)
+                protein_gen = cds_to_protein(cds_gen)
+                if not protein_truth or not protein_gen:
+                    print(f"Warning: Empty protein for {model_name}_{taxid}_{sequence_index}, skipping...")
+                    continue
+                
+                name_truth = f"{model_name}_{taxid}_{sequence_index}_truth"
+                name_gen = f"{model_name}_{taxid}_{sequence_index}_gen"
+                af3_input_truth = create_af3_input(protein_truth, name_truth)
+                af3_input_gen = create_af3_input(protein_gen, name_gen)
+                with open(os.path.join(output_dir, f"{name_truth}.json"), 'w') as f_out:
+                    json.dump(af3_input_truth, f_out, indent=2)
+                with open(os.path.join(output_dir, f"{name_gen}.json"), 'w') as f_out:
+                    json.dump(af3_input_gen, f_out, indent=2)
+                print(f"Created AF3: {name_truth}.json and {name_gen}.json")
+                count += 1
+            except Exception as e:
+                print(f"Error processing {model_name}_{taxid}_{sequence_index}: {e}")
+    
+    print(f"\nFrom JSONL: {count} samples (truth+gen) AF3 files saved to {output_dir}")
+
+
 def build_af3_inputs():
     """
     Build AlphaFold3 input files.
@@ -224,15 +287,86 @@ def build_protenix_inputs():
     print(f"\nAll Protenix files saved to: {output_dir}")
 
 
+def build_protenix_inputs_from_jsonl(jsonl_path=None, output_dir=None):
+    """
+    Build Protenix input files from JSONL (e.g. all_gen_per_sample_metrics.jsonl).
+    Only processes lines where is_CDS is True.
+    For each row: original CDS = ground_truth, generated CDS = prompt + generated_sequence.
+    Outputs both _truth and _gen for each sample.
+    """
+    if jsonl_path is None:
+        jsonl_path = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/results/Generate/all_gen_per_sample_metrics.jsonl"
+    if output_dir is None:
+        output_dir = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/results/protenix/input"
+    
+    os.makedirs(output_dir, exist_ok=True)
+    count = 0
+    
+    with open(jsonl_path, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as e:
+                print(f"Skip invalid JSONL line: {e}")
+                continue
+            
+            if not row.get("is_CDS", False):
+                continue
+            
+            ground_truth = row.get("ground_truth", "")
+            prompt = row.get("prompt", "")
+            generated_sequence = row.get("generated_sequence", "")
+            if not ground_truth or (not prompt and not generated_sequence):
+                continue
+            ground_truth = prompt +ground_truth
+            cds_gen = prompt + generated_sequence
+            model_name = row.get("model_name", "unknown")
+            taxid = row.get("taxid", "")
+            sequence_index = row.get("sequence_index", count)
+            
+            try:
+                protein_truth = cds_to_protein(ground_truth)
+                protein_gen = cds_to_protein(cds_gen)
+                if not protein_truth or not protein_gen:
+                    print(f"Warning: Empty protein for {model_name}_{taxid}_{sequence_index}, skipping...")
+                    continue
+                
+                name_truth = f"{model_name}_{taxid}_{sequence_index}_truth"
+                name_gen = f"{model_name}_{taxid}_{sequence_index}_gen"
+                protenix_input_truth = create_protenix_input(protein_truth, name_truth)
+                protenix_input_gen = create_protenix_input(protein_gen, name_gen)
+                with open(os.path.join(output_dir, f"{name_truth}.json"), 'w') as f_out:
+                    json.dump(protenix_input_truth, f_out, indent=2)
+                with open(os.path.join(output_dir, f"{name_gen}.json"), 'w') as f_out:
+                    json.dump(protenix_input_gen, f_out, indent=2)
+                print(f"Created Protenix: {name_truth}.json and {name_gen}.json")
+                count += 1
+            except Exception as e:
+                print(f"Error processing {model_name}_{taxid}_{sequence_index}: {e}")
+    
+    print(f"\nFrom JSONL: {count} samples (truth+gen) Protenix files saved to {output_dir}")
+
+
 def main():
     """
     Main function to build both AF3 and Protenix inputs.
+    Supports CSV (CDS_success) and JSONL (Generate metrics); for JSONL only is_CDS=True
+    are processed, with CDS = prompt + generated_sequence.
     """
-    print("Building AlphaFold3 inputs...")
-    build_af3_inputs()
+    print("Building AlphaFold3 inputs from CSV...")
+    # build_af3_inputs()
     
-    print("\nBuilding Protenix inputs...")
-    build_protenix_inputs()
+    print("\nBuilding AlphaFold3 inputs from JSONL (is_CDS=True, CDS=prompt+generated_sequence)...")
+    # build_af3_inputs_from_jsonl()
+    
+    print("\nBuilding Protenix inputs from CSV...")
+    # build_protenix_inputs()
+    
+    print("\nBuilding Protenix inputs from JSONL (is_CDS=True, CDS=prompt+generated_sequence)...")
+    build_protenix_inputs_from_jsonl()
 
 
 if __name__ == "__main__":
