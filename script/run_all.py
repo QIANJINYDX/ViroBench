@@ -659,15 +659,20 @@ def run(
             model_name=model_name,
             model_path=MODEL_DIR)
         batch_size = 16
-        emb_pool = "mean"
+        # 与官方 sequence_understanding 一致：使用 last non-padded token (EOS) embedding，不用 max
+        emb_pool = "last_token"
         max_length = 16384
-        hidden_size = _infer_embedding_dim(
-            model,
-            layer_name=None,
-            pool=emb_pool,
-            default_dim=1024,
-            sample_length=min(512, max_length or 512),
-        )
+        # GENERator config 中 hidden_size=2048；_infer 可能因 BFloat16 失败回退到 1024，导致分类头维度错误、MCC≈0
+        _cfg = getattr(getattr(model, "model", None), "config", None)
+        hidden_size = getattr(_cfg, "hidden_size", None) if _cfg is not None else None
+        if hidden_size is None:
+            hidden_size = _infer_embedding_dim(
+                model,
+                layer_name=None,
+                pool=emb_pool,
+                default_dim=2048,  # 1.2b/3b 均为 2048，与 config.json 一致
+                sample_length=min(512, max_length or 512),
+            )
     elif model_name == "BioFM-265M":
         from models.biofm import BioFMModel
         MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/BioFM-265M"
@@ -1215,6 +1220,7 @@ python script/run_all.py --model_name LucaVirus-default-step3.8M --dataset_name 
 
 # 快速测试
 python script/run_all.py --model_name nt-500m-human --dataset_name DNA-taxon-genus --force_recompute_embeddings True --train_num_windows 2 --eval_num_windows 4
+python script/run_all.py --model_name GENERator-v2-eukaryote-1.2b-base --dataset_name DNA-taxon-genus --force_recompute_embeddings True --train_num_windows 2 --eval_num_windows 4
 """
 
 def main():
