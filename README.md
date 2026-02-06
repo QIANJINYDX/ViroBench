@@ -48,7 +48,7 @@ This repository provides a unified, reproducible evaluation pipeline and diagnos
 - All variants use **8:1:1** train/val/test ratio
 
 **Metrics**
-- MCC, ACC, AUROC (AUC), F1, AUPRC
+- MCC, ACC, AUROC, F1, AUPRC
 
 ---
 
@@ -78,7 +78,6 @@ This repository provides a unified, reproducible evaluation pipeline and diagnos
   - multiple host categories (**A–F**, with **D1–D3** as sub-categories)
   - nucleic-acid types: **DNA / RNA / Unknown**
 
-> Suggested repository layout (adjust to your repo):
 
 ---
 
@@ -98,7 +97,7 @@ The benchmark includes NFMs and conventional baselines (e.g., CNN) across divers
 ## ⚙️ Installation
 
 
-### Option A: conda (evo2)
+### Environment setup
 ```bash
 git clone https://github.com/QIANJINYDX/ViroBench
 cd ViroBench
