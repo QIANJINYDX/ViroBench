@@ -1,5 +1,7 @@
 # ViroBench: Viral Understanding & Safety Benchmark for Nucleotide Foundation Models
 
+[![Hugging Face Dataset](https://img.shields.io/badge/🤗%20Hugging%20Face-Dataset-yellow)](https://huggingface.co/datasets/YDXX/ViroBench) [![ModelScope Dataset](https://img.shields.io/badge/ModelScope-Dataset-orange)](https://www.modelscope.cn/datasets/YDDDDD0/ViroBench)
+
 ![Framework overview](resource/20260206-171719.png)
 
 **ViroBench** is a dual-axis diagnostic benchmark for **viral sequence modeling**, designed to evaluate both:
