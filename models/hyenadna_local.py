@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 基于「自训练 / ckpt_to_hf 转换」的 HyenaDNA 权重，本地加载并提供：
+- get_logits: 提取序列的 logits（完整模型输出，形状 (B,L,V)）
 - get_embedding: 提取序列 embedding（mean/max/cls pool）
 - generate: 自回归生成 DNA 序列
 
@@ -25,7 +26,26 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-Pooling = Literal["mean", "max", "cls"]
+import os, inspect
+from typing import List, Optional, Literal, Dict, Any, Union
+
+import torch
+import numpy as np
+from transformers import (
+    AutoTokenizer,
+    AutoModel,
+    AutoModelForSequenceClassification,
+)
+
+from .base_model import BaseModel
+
+import torch.nn.functional as F
+
+import math
+import warnings
+from typing import Tuple
+
+Pooling = Literal["mean", "max", "cls", None]
 
 
 # ---------- 本地字符级 Tokenizer（与 pretrain hg38_char_tokenizer 一致） ----------
@@ -270,23 +290,23 @@ class HyenaDNALocal:
         self.d_model = self.config.get("d_model", 128)
 
     @torch.no_grad()
-    def get_embedding(
+    def get_logits(
         self,
         sequences: Union[str, List[str]],
         batch_size: int = 1,
-        pool: Pooling = "mean",
         truncation: bool = True,
         max_length: Optional[int] = None,
-        return_numpy: bool = True,
-    ) -> Union[np.ndarray, List[torch.Tensor]]:
+        return_numpy: bool = False,
+    ) -> Union[List[torch.Tensor], np.ndarray]:
         """
-        提取序列的向量表示。pool: "mean" | "max" | "cls"。
-        返回 (N, d_model) 或张量列表。
+        提取序列的 logits（完整模型前向，非 backbone 的 hidden states）。
+        返回 list 时：每条序列一个 tensor，形状 (L_i, vocab_size)；
+        若 return_numpy=True：返回 padded 的 (N, max_L, vocab_size)。
         """
         if isinstance(sequences, str):
             sequences = [sequences]
         max_len = max_length or self.model_max_length
-        all_embs = []
+        all_logits = []
 
         for start in range(0, len(sequences), batch_size):
             batch = sequences[start : start + batch_size]
@@ -300,20 +320,93 @@ class HyenaDNALocal:
             )
             input_ids = enc["input_ids"].to(self.device)
 
-            hidden = self.model.backbone(input_ids)  # (B, L, d_model)
-            B, L, H = hidden.shape
+            out = self.model(input_ids=input_ids)
+            logits = out[0].logits if isinstance(out, (tuple, list)) and len(out) > 0 else out.logits
+            # logits: (B, L, V)
+            B, L, V = logits.shape
+            for i in range(B):
+                # 去掉 padding：按 input 有效长度截断（这里简化：用当前 batch 的 max 作为 L，不二次 pad）
+                all_logits.append(logits[i].float().cpu())
 
-            if pool == "cls":
-                pooled = hidden[:, 0, :]
-            elif pool == "max":
-                pooled = hidden.max(dim=1)[0]
+        if return_numpy:
+            max_L = max(t.size(0) for t in all_logits)
+            V = all_logits[0].size(-1)
+            pad_logits = np.zeros((len(all_logits), max_L, V), dtype=np.float32)
+            for i, t in enumerate(all_logits):
+                pad_logits[i, : t.size(0), :] = t.numpy()
+            return pad_logits
+        return all_logits
+
+    @torch.no_grad()
+    def get_embedding(
+        self,
+        sequences: Union[str, List[str]],
+        batch_size: int = 1,
+        pool: Pooling = "mean",
+        truncation: bool = True,
+        max_length: Optional[int] = None,
+        return_numpy: bool = True,
+    ) -> Union[np.ndarray, List[torch.Tensor]]:
+        """
+        提取序列的 embedding，对齐官方 HyenaDNA 用法：
+          tok_seq = tokenizer(sequence)[\"input_ids\"]
+          tok_seq = torch.LongTensor(tok_seq).unsqueeze(0).to(device)
+          with torch.inference_mode():
+              embeddings = model(tok_seq)   # 此处官方为 backbone 输出 (B, L, d_model)
+
+        - pool is None: 返回原始 per-position embeddings，形状 (B, L, d_model) 或 list[(L_i, d_model)]。
+        - pool "mean" | "max" | "cls": 返回池化后的 (N, d_model)。
+        """
+        if isinstance(sequences, str):
+            sequences = [sequences]
+        max_len = max_length or self.model_max_length
+        self.model.to(self.device)
+        self.model.eval()
+
+        all_embs = []
+        for start in range(0, len(sequences), batch_size):
+            batch = sequences[start : start + batch_size]
+            # 官方风格: tokenizer(sequence)["input_ids"] -> LongTensor -> device
+            enc = self.tokenizer(
+                batch,
+                return_tensors="pt",
+                padding=True,
+                truncation=truncation,
+                max_length=max_len,
+                add_special_tokens=False,
+            )
+            tok_seq = enc["input_ids"].long().to(self.device)
+
+            with torch.inference_mode():
+                # 官方: embeddings = model(tok_seq)；本地为 LM 故用 backbone 得到相同形状 (B, L, d_model)
+                embeddings = self.model.backbone(tok_seq)
+
+            B, L, H = embeddings.shape
+
+            if pool is None:
+                # 与官方一致：返回原始 embeddings，不池化
+                for i in range(B):
+                    all_embs.append(embeddings[i].float().cpu())
             else:
-                pooled = hidden.mean(dim=1)
+                if pool == "cls":
+                    pooled = embeddings[:, 0, :]
+                elif pool == "max":
+                    pooled = embeddings.max(dim=1)[0]
+                else:
+                    pooled = embeddings.mean(dim=1)
+                if return_numpy:
+                    all_embs.append(pooled.float().cpu().numpy())
+                else:
+                    all_embs.extend([pooled[i] for i in range(B)])
 
+        if pool is None:
             if return_numpy:
-                all_embs.append(pooled.float().cpu().numpy())
-            else:
-                all_embs.extend([pooled[i] for i in range(B)])
+                max_L = max(t.size(0) for t in all_embs)
+                out = np.zeros((len(all_embs), max_L, all_embs[0].size(-1)), dtype=np.float32)
+                for i, t in enumerate(all_embs):
+                    out[i, : t.size(0), :] = t.numpy()
+                return out
+            return all_embs
 
         if return_numpy:
             return np.concatenate(all_embs, axis=0)
@@ -399,6 +492,438 @@ class HyenaDNALocal:
         if return_list:
             return outputs
         return outputs[0] if outputs else ""
+    # Lazy load: CausalLM for generate / PPL
+    # =============================
+    def _infer_model_input_device(self, model) -> torch.device:
+        # device_map="auto" 时，inputs 通常送到 embedding 所在设备即可
+        if hasattr(model, "device") and model.device is not None:
+            try:
+                return torch.device(model.device)
+            except Exception:
+                pass
+        try:
+            return next(model.parameters()).device
+        except Exception:
+            return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+    def _ensure_lm_model(self):
+        """
+        生成 / PPL 使用已加载的 ConvLMHeadModel（self.model）。
+        本地 ckpt 的 config.model_type 为 "hyenadna"，不在 HuggingFace Auto 注册表中，
+        故不使用 AutoModelForCausalLM.from_pretrained，直接复用 _load_model_and_tokenizer 加载的完整模型。
+        """
+        if hasattr(self, "lm_model") and self.lm_model is not None:
+            return
+
+        self.lm_model = self.model
+        if getattr(self, "device_map", None) is None:
+            self.lm_model.to(self.device)
+        self.lm_model.eval()
+
+    @staticmethod
+    def _get_pad_id_fallback(tokenizer) -> int:
+        """
+        tokenizer 可能没有 pad_token_id。
+        这里返回一个合法 id 用于右侧 padding（loss 会用长度 mask 排除 padding）。
+        注意：不使用 (input_ids==pad_id) 来做 mask，避免 pad_id 与真实 token 冲突。
+        """
+        for name in ("pad_token_id", "pad_id"):
+            if hasattr(tokenizer, name):
+                v = getattr(tokenizer, name)
+                if v is not None:
+                    try:
+                        return int(v)
+                    except Exception:
+                        pass
+
+        # fallback: 用 'A' 的 token id
+        try:
+            ids = tokenizer("A", add_special_tokens=False)["input_ids"]
+            if ids:
+                return int(ids[0])
+        except Exception:
+            pass
+        return 0
+
+    # =============================
+    # Generation (manual sampling)
+    # =============================
+    @staticmethod
+    def _top_k_top_p_filtering(
+        logits: torch.Tensor,
+        top_k: int = 0,
+        top_p: float = 1.0,
+        min_tokens_to_keep: int = 1,
+    ) -> torch.Tensor:
+        """
+        logits: (V,)
+        """
+        assert logits.dim() == 1
+
+        if top_k > 0:
+            top_k = min(max(int(top_k), min_tokens_to_keep), logits.size(-1))
+            kth = torch.topk(logits, top_k).values[-1]
+            logits = torch.where(logits < kth, torch.full_like(logits, -float("inf")), logits)
+
+        if top_p < 1.0:
+            sorted_logits, sorted_idx = torch.sort(logits, descending=True)
+            probs = F.softmax(sorted_logits, dim=-1)
+            cumprobs = torch.cumsum(probs, dim=-1)
+
+            cutoff = cumprobs > float(top_p)
+            cutoff[:min_tokens_to_keep] = False
+
+            sorted_logits = torch.where(cutoff, torch.full_like(sorted_logits, -float("inf")), sorted_logits)
+
+            new_logits = torch.full_like(logits, -float("inf"))
+            new_logits.scatter_(0, sorted_idx, sorted_logits)
+            logits = new_logits
+
+        return logits
+
+    @torch.no_grad()
+    def generate(
+        self,
+        prompt_seqs: Union[str, List[str]] = "ACGT",
+        n_samples: int = 1,
+        n_tokens: int = 200,
+        temperature: float = 1.0,
+        top_k: int = 4,
+        top_p: float = 1.0,
+        max_prompt_tokens: Optional[int] = None,
+        return_list: bool = True,
+    ) -> Union[List[str], str]:
+        """
+        HyenaDNA 序列生成（手写 sampling，不依赖 transformers.generate）
+        - 支持 prompt 为 str 或 List[str]
+        - 若 prompt 为 str：会复制为 n_samples 条生成
+        """
+        self._ensure_lm_model()
+        model = self.lm_model
+        tok = self.tokenizer
+        dev = self._infer_model_input_device(model)
+
+        # 规范 prompts
+        if isinstance(prompt_seqs, str):
+            prompts = [prompt_seqs] * int(n_samples)
+        else:
+            prompts = list(prompt_seqs)
+            if len(prompts) == 1 and int(n_samples) > 1:
+                prompts = prompts * int(n_samples)
+
+        outputs: List[str] = []
+        model.eval()
+
+        with torch.inference_mode():
+            for p in prompts:
+                enc = tok(p, return_tensors="pt", add_special_tokens=False)
+                input_ids = enc["input_ids"].to(dev)
+
+                if max_prompt_tokens is not None and input_ids.size(1) > int(max_prompt_tokens):
+                    input_ids = input_ids[:, -int(max_prompt_tokens):]
+
+                for _ in range(int(n_tokens)):
+                    out = model(input_ids=input_ids)
+                    out = out[0] if isinstance(out, (tuple, list)) and len(out) > 0 else out
+                    logits = out.logits  # (1, L, V)
+                    next_logits = logits[0, -1, :].float()
+
+                    if temperature is not None and float(temperature) > 0:
+                        next_logits = next_logits / float(temperature)
+
+                    next_logits = self._top_k_top_p_filtering(
+                        next_logits, top_k=int(top_k), top_p=float(top_p)
+                    )
+                    probs = F.softmax(next_logits, dim=-1)
+                    next_id = torch.multinomial(probs, num_samples=1)  # (1,)
+
+                    input_ids = torch.cat([input_ids, next_id.view(1, 1)], dim=1)
+
+                txt = tok.decode(input_ids[0], skip_special_tokens=True)
+                txt = txt.replace(" ", "")  # char-level tokenizer 有时会带空格
+                outputs.append(txt)
+
+        if return_list:
+            return outputs
+        return outputs[0] if outputs else ""
+
+    # =============================
+    # PPL (full / conditional)
+    # =============================
+    @staticmethod
+    def _safe_exp(nll: float, max_nll: float = 700.0) -> float:
+        if math.isnan(nll):
+            return float("nan")
+        if math.isinf(nll):
+            return float("inf") if nll > 0 else 0.0
+        if nll > max_nll:
+            return float("inf")
+        try:
+            return math.exp(nll)
+        except OverflowError:
+            return float("inf")
+
+    @torch.no_grad()
+    def get_ppl(
+        self,
+        sequences: Union[str, List[str]],
+        batch_size: int = 1,
+        max_length: Optional[int] = None,
+        prompt_len_chars: Optional[int] = 128,  # None => full ppl；否则 conditional ppl
+        use_cuda: bool = True,
+        ppl_mode: Literal["token", "char"] = "token",
+        return_details: bool = True,
+    ) -> Union[List[Dict[str, Any]], float, List[float]]:
+        """
+        HyenaDNA PPL (full / conditional)，并补齐统计字段：
+        - token 口径：avg_nll_token = total_nll / token_count, ppl_token = exp(avg_nll_token)
+        - char  口径：avg_nll_char  = total_nll / char_count,  ppl_char  = exp(avg_nll_char)
+        - 主输出 ppl 由 ppl_mode 决定（token 或 char）
+
+        conditional 规则（按字符切分）：
+          prompt = seq[:prompt_len_chars]
+          continuation = seq[prompt_len_chars:]
+        只对 continuation 的 token 计算 NLL。
+        """
+
+        # ---- ensure causal LM ----
+        self._ensure_lm_model()
+        model = self.lm_model
+        tok = self.tokenizer
+        model.eval()
+
+        # ---- normalize input ----
+        if isinstance(sequences, str):
+            seq_list = [sequences]
+            is_single = True
+        else:
+            seq_list = list(sequences)
+            is_single = False
+
+        def _clean_seq(s: str) -> str:
+            # 生成结果常见 "A T G ..."；PPL 计算前统一清理空格/换行
+            return (s or "").replace(" ", "").replace("\n", "").replace("\t", "").strip().upper()
+
+        seq_list = [_clean_seq(s) for s in seq_list]
+
+        # ---- device ----
+        target_device = torch.device("cuda:0") if (use_cuda and torch.cuda.is_available()) else torch.device("cpu")
+        # device_map="auto" 时，模型可能分片；inputs 送到 model input device
+        dev = self._infer_model_input_device(model)
+        if dev.type == "cpu" and target_device.type == "cuda":
+            # 尝试把整模型搬到 cuda（只有在 device_map=None 时通常可行）
+            try:
+                if getattr(self, "device_map", None) is None:
+                    model.to(target_device)
+                    dev = target_device
+            except Exception:
+                pass
+
+        pad_id = self._get_pad_id_fallback(tok)
+
+        # 序列长度不得超过模型支持的 max（config 中 max_position_embeddings + 2 或 layer.l_max），否则 backbone 内会维度不匹配
+        effective_max_length = max_length if max_length is not None else getattr(self, "model_max_length", 1026)
+        if effective_max_length is not None:
+            effective_max_length = int(effective_max_length)
+
+        # ---- pre-tokenize & prompt token lengths ----
+        seq_infos: List[Tuple[int, str, List[int], int, int, int]] = []
+        # tuple: (orig_i, seq, ids, prompt_tok_len, seq_char_len, cont_char_len)
+        def _to_flat_ids(raw):
+            """CharacterTokenizer 对单条 str 返回 input_ids 为 [[...]]，转为单条 int 列表。"""
+            if not raw:
+                return []
+            x = raw[0] if isinstance(raw[0], (list, torch.Tensor)) else raw
+            if torch.is_tensor(x):
+                x = x.tolist()
+            return list(map(int, x))
+
+        for i, s in enumerate(seq_list):
+            try:
+                raw_ids = tok(s, add_special_tokens=False)["input_ids"]
+                ids = _to_flat_ids(raw_ids)
+                if effective_max_length is not None and len(ids) > effective_max_length:
+                    ids = ids[:effective_max_length]
+
+                seq_char_len = len(s)
+
+                if prompt_len_chars is not None:
+                    p_chars = min(int(prompt_len_chars), seq_char_len)
+                    cont_char_len = max(seq_char_len - p_chars, 0)
+
+                    p_str = s[:p_chars]
+                    p_ids = _to_flat_ids(tok(p_str, add_special_tokens=False)["input_ids"])
+                    prompt_tok_len = min(len(p_ids), len(ids))
+                else:
+                    p_chars = 0
+                    cont_char_len = max(seq_char_len - 1, 0)  # full ppl: 预测从 token1 开始，字符上通常对应 L-1
+                    prompt_tok_len = 0
+
+                seq_infos.append((i, s, ids, int(prompt_tok_len), int(seq_char_len), int(cont_char_len)))
+            except Exception as e:
+                warnings.warn(f"Tokenize failed at {i}: {str(e)[:120]}")
+                seq_infos.append((i, s, [], 0, len(s), 0))
+
+        # length sort to save padding
+        seq_infos_sorted = sorted(seq_infos, key=lambda x: len(x[2]))
+
+        results: List[Dict[str, Any]] = []
+
+        with torch.inference_mode():
+            for st in range(0, len(seq_infos_sorted), batch_size):
+                batch = seq_infos_sorted[st: st + batch_size]
+                B = len(batch)
+                lens = [len(x[2]) for x in batch]
+                max_len = max(lens) if lens else 0
+
+                # too short: cannot compute next-token loss
+                if max_len <= 1:
+                    for orig_i, s, ids, p_tok, seq_char_len, cont_char_len in batch:
+                        results.append({
+                            "sequence_id": orig_i,
+                            "sequence_chars": seq_char_len,
+                            "prompt_len_chars": int(prompt_len_chars) if prompt_len_chars is not None else 0,
+                            "char_count": int(cont_char_len),
+
+                            "sequence_tokens": len(ids),
+                            "prompt_tokens": int(p_tok),
+                            "token_count": 0,
+
+                            "avg_nll_token": float("nan"),
+                            "avg_nll_char": float("nan"),
+                            "ppl_token": float("nan"),
+                            "ppl_char": float("nan"),
+                            "ppl": float("nan"),
+                            "mode": ppl_mode,
+                            "error": "too_short",
+                        })
+                    continue
+
+                # pad + valid mask (do NOT rely on pad_id equality for mask)
+                input_ids = torch.full((B, max_len), int(pad_id), dtype=torch.long)
+                valid_mask = torch.zeros((B, max_len), dtype=torch.bool)
+                prompt_lens_tok = [0] * B
+                seq_char_lens = [0] * B
+                cont_char_lens = [0] * B
+
+                for r, (orig_i, s, ids, p_tok, seq_char_len, cont_char_len) in enumerate(batch):
+                    L = len(ids)
+                    if L > 0:
+                        input_ids[r, :L] = torch.tensor(ids, dtype=torch.long)
+                        valid_mask[r, :L] = True
+                    prompt_lens_tok[r] = int(p_tok)
+                    seq_char_lens[r] = int(seq_char_len)
+                    cont_char_lens[r] = int(cont_char_len)
+
+                input_ids = input_ids.to(dev, non_blocking=True)
+                valid_mask = valid_mask.to(dev, non_blocking=True)
+
+                out = model(input_ids=input_ids)
+                out = out[0] if isinstance(out, (tuple, list)) and len(out) > 0 else out
+                logits = out.logits  # (B, L, V)
+                if logits.dim() != 3:
+                    raise RuntimeError(f"Unexpected logits shape: {tuple(logits.shape)}")
+                logits = logits.float()
+
+                # shift
+                shift_logits = logits[:, :-1, :].contiguous()     # (B, L-1, V)
+                shift_labels = input_ids[:, 1:].contiguous()      # (B, L-1)
+                shift_valid  = valid_mask[:, 1:].contiguous()     # (B, L-1)
+
+                # build final mask: full or conditional
+                if prompt_len_chars is None:
+                    final_mask = shift_valid
+                else:
+                    cont_mask = torch.zeros_like(shift_valid)
+                    for r in range(B):
+                        seq_len_tok = int(valid_mask[r].sum().item())
+                        if seq_len_tok <= 1:
+                            continue
+                        start = max(prompt_lens_tok[r] - 1, 0)  # shift index
+                        end = seq_len_tok - 1                   # exclusive in shift space
+                        if start < end:
+                            cont_mask[r, start:end] = True
+                    final_mask = shift_valid & cont_mask
+
+                V = shift_logits.size(-1)
+                token_nll = F.cross_entropy(
+                    shift_logits.view(-1, V),
+                    shift_labels.view(-1),
+                    reduction="none",
+                ).view(B, -1)  # (B, L-1)
+
+                nll_sum = (token_nll * final_mask).sum(dim=1)   # (B,)
+                tok_cnt = final_mask.sum(dim=1)                 # (B,)
+
+                for r, (orig_i, s, ids, p_tok, seq_char_len, cont_char_len) in enumerate(batch):
+                    c_tok = int(tok_cnt[r].item())
+                    if c_tok <= 0:
+                        results.append({
+                            "sequence_id": orig_i,
+                            "sequence_chars": int(seq_char_len),
+                            "prompt_len_chars": int(prompt_len_chars) if prompt_len_chars is not None else 0,
+                            "char_count": int(cont_char_len),
+
+                            "sequence_tokens": len(ids),
+                            "prompt_tokens": int(p_tok),
+                            "token_count": 0,
+
+                            "avg_nll_token": float("nan"),
+                            "avg_nll_char": float("nan"),
+                            "ppl_token": float("nan"),
+                            "ppl_char": float("nan"),
+                            "ppl": float("nan"),
+                            "mode": ppl_mode,
+                            "error": "no_continuation_tokens" if prompt_len_chars is not None else "no_valid_tokens",
+                        })
+                        continue
+
+                    total_nll = float(nll_sum[r].item())
+                    avg_nll_token = total_nll / float(c_tok)
+                    ppl_token = float(self._safe_exp(avg_nll_token))
+
+                    # char-level derived metric (for BPB / normalization)
+                    c_char = int(cont_char_len) if prompt_len_chars is not None else max(int(seq_char_len) - 1, 0)
+                    if c_char > 0:
+                        avg_nll_char = total_nll / float(c_char)
+                        ppl_char = float(self._safe_exp(avg_nll_char))
+                    else:
+                        avg_nll_char = float("nan")
+                        ppl_char = float("nan")
+
+                    ppl = ppl_char if ppl_mode == "char" else ppl_token
+
+                    results.append({
+                        "sequence_id": orig_i,
+
+                        "sequence_chars": int(seq_char_len),
+                        "prompt_len_chars": int(prompt_len_chars) if prompt_len_chars is not None else 0,
+                        "char_count": int(c_char),
+
+                        "sequence_tokens": len(ids),
+                        "prompt_tokens": int(p_tok),
+                        "token_count": int(c_tok),
+
+                        "avg_nll_token": float(avg_nll_token),
+                        "avg_nll_char": float(avg_nll_char),
+
+                        "ppl_token": float(ppl_token),
+                        "ppl_char": float(ppl_char),
+
+                        "ppl": float(ppl),
+                        "mode": ppl_mode,
+                    })
+
+        # restore original order
+        results.sort(key=lambda x: x["sequence_id"])
+
+        if return_details:
+            return results
+
+        ppl_list = [float(x.get("ppl", float("nan"))) for x in results]
+        if is_single:
+            return ppl_list[0] if ppl_list else float("nan")
+        return ppl_list
 
 
 if __name__ == "__main__":
@@ -427,11 +952,22 @@ if __name__ == "__main__":
         pretrain_root=args.pretrain_root,
     )
 
-    # embedding
+    # logits
     seqs = ["ACGT" * 64, "ATGC" * 64]
+    logits_list = model.get_logits(seqs, batch_size=2, return_numpy=False)
+    print("logits (list): num_seqs =", len(logits_list), "first shape:", logits_list[0].shape)
+    logits_pad = model.get_logits(seqs, batch_size=2, return_numpy=True)
+    print("logits (numpy padded) shape:", logits_pad.shape)
+
+    # embedding（可选）
     emb = model.get_embedding(seqs, batch_size=2, pool="mean")
     print("embedding shape:", emb.shape)
 
     # generate
     gen = model.generate(prompt_seqs="ACGT", n_samples=2, n_tokens=50, temperature=1.0, top_k=4, top_p=1.0)
     print("generated:", gen)
+
+    # PPL（与 hyenadna_model.py 末尾测试一致）
+    seqs = ["ACGT" * 200, "ATGC" * 220]
+    ppl_full = model.get_ppl(seqs, batch_size=2, return_details=False)
+    print("ppl_full:", ppl_full)

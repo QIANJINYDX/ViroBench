@@ -2,6 +2,7 @@
 from __future__ import annotations
 import os
 import glob
+import time
 import warnings
 import json
 import math
@@ -212,7 +213,7 @@ class FineTuneSeqEvaluator:
         # 早停
         early_stopping_patience: int = 5,
         early_stopping_min_delta: float = 1e-4,
-        early_stopping_metric: str = "mcc",  # 早停指标：mcc, accuracy, f1_macro
+        early_stopping_metric: str = "mcc",  # 早停指标：mcc, accuracy, f1_macro, auprc
         # embedding 计算参数
         emb_pool: Literal["final", "mean"] = "final",
         emb_batch_size: int = 128,
@@ -874,11 +875,13 @@ class FineTuneSeqEvaluator:
                         else:
                             groups = None
                         return feats, labels, groups
+            t0_emb = time.perf_counter()
             if use_chunked:
                 feats, labels, groups = self._extract_embeddings_chunked(
                     dataset, split=split)
             else:
                 feats, labels, groups = self._extract_embeddings(dataset)
+            self._embedding_time_sec += time.perf_counter() - t0_emb
             if cache_dir:
                 torch.save(
                     {"feats": feats, "labels": labels, "groups": groups},
@@ -900,7 +903,9 @@ class FineTuneSeqEvaluator:
                         # 删除旧的 chunk 文件
                         import shutil
                         shutil.rmtree(chunk_dir)
+                    t0_emb = time.perf_counter()
                     self._extract_embeddings_chunked(ds, split=split, return_full=False)
+                    self._embedding_time_sec += time.perf_counter() - t0_emb
 
             train_ds = ChunkedEmbeddingDataset(
                 os.path.join(self.embedding_save_dir, "train_chunks"))
@@ -1528,6 +1533,7 @@ class FineTuneSeqEvaluator:
 
     # ---------- 主流程 ----------
     def run(self) -> Dict[str, Any]:
+        self._embedding_time_sec = 0.0
         # 1) 数据与特征
         train_loader, val_loader, test_loader = self._make_loaders()
 
@@ -1550,6 +1556,7 @@ class FineTuneSeqEvaluator:
                     if v.get(key) is not None]
             return float(np.mean(vals)) if vals else -1.0
 
+        t0_head = time.perf_counter()
         for epoch in range(1, self.num_epochs + 1):
             if self._train_batch_sampler is not None:
                 self._train_batch_sampler.set_epoch(epoch)
@@ -1590,7 +1597,10 @@ class FineTuneSeqEvaluator:
                     metric_key = "accuracy"
                 elif metric_key == "f1":
                     metric_key = "f1_macro"
-                cur = val_metrics.get(metric_key, -1.0)
+                if metric_key == "auprc":
+                    cur = val_metrics.get("auprc") or val_metrics.get("auprc_macro_ovr") or -1.0
+                else:
+                    cur = val_metrics.get(metric_key, -1.0)
             else:
                 # 多任务：计算所有任务的平均值
                 metric_key = self.early_stopping_metric
@@ -1598,7 +1608,12 @@ class FineTuneSeqEvaluator:
                     metric_key = "accuracy"
                 elif metric_key == "f1":
                     metric_key = "f1_macro"
-                cur = _mean_metric(val_metrics, metric_key)
+                if metric_key == "auprc":
+                    cur = _mean_metric(val_metrics, "auprc")
+                    if cur < 0:
+                        cur = _mean_metric(val_metrics, "auprc_macro_ovr")
+                else:
+                    cur = _mean_metric(val_metrics, metric_key)
             improved = (cur is not None) and (
                 cur > best_val_metric + self.early_stopping_min_delta)
             if improved:
@@ -1650,6 +1665,7 @@ class FineTuneSeqEvaluator:
                     f"[EarlyStop] No improvement in {self.early_stopping_patience} epochs (metric: {self.early_stopping_metric}).")
                 break
 
+        self._head_training_time_sec = time.perf_counter() - t0_head
         # 如需，把最佳权重加载回去再做一次完整版评测
         if best_state is not None:
             self.model.load_state_dict(best_state)
@@ -1688,6 +1704,8 @@ class FineTuneSeqEvaluator:
                 num_classes = int(len(label_map))
         summary: Dict[str, Any] = {
             "output_dir": self.output_dir,
+            "time_embedding_extract_sec": getattr(self, "_embedding_time_sec", 0.0),
+            "time_head_training_sec": getattr(self, "_head_training_time_sec", 0.0),
             "num_classes": num_classes,
             "train_size": int(len(self.train_ds)),
             "val_size": int(len(self.val_ds)),

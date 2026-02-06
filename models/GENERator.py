@@ -118,24 +118,14 @@ class GENERatorModel(BaseModel):
 
     def _preprocess(self, seq: str) -> str:
         """
-        预处理：
+        预处理（与官方一致）：
         1) 大写 + 去空白
-        2) 6-mer 对齐：长度补齐到 k 的倍数
-           ✅ 默认右侧补齐，避免平移整条 k-mer 切分
+        2) 6-mer 对齐：截断到长度为 6 的倍数（不补齐）
         """
         seq = seq.strip().upper()
         if len(seq) == 0:
             return seq
-
-        r = len(seq) % self.kmer_size
-        if r != 0:
-            pad_len = self.kmer_size - r
-            pad = self.kmer_pad_char * pad_len
-            if self.kmer_pad_side == "right":
-                seq = seq + pad
-            else:
-                seq = pad + seq
-        return seq
+        return seq[: len(seq) // self.kmer_size * self.kmer_size]
 
     @staticmethod
     def _last_nonpad_index(attention_mask: torch.Tensor) -> torch.Tensor:
@@ -153,98 +143,86 @@ class GENERatorModel(BaseModel):
         sequences: Union[str, List[str]],
         batch_size: int = 8,
         pool: Pooling = "mean",
-        pooling: Optional[Pooling] = None,  # ✅ 兼容你之前的 pooling=...
+        pooling: Optional[Pooling] = None,  # 兼容历史参数名
         layer_index: int = -1,
         return_numpy: bool = True,
-        exclude_special_tokens: bool = True,
+        exclude_special_tokens: bool = True,  # 保留兼容；官方实现不排除 special tokens
         **kwargs,
     ) -> Union[np.ndarray, torch.Tensor]:
-
         if pooling is not None:
-            pool = pooling  # 兼容历史参数名
+            pool = pooling
 
         if isinstance(sequences, str):
             sequences = [sequences]
 
-        processed = [self._preprocess(s) for s in sequences]
+        # 官方实现：BOS + 截断到 6 的倍数
+        bos = self.tokenizer.bos_token or ""
+        processed = [bos + self._preprocess(s) for s in sequences]
 
         results: List[torch.Tensor] = []
 
         for i in tqdm(range(0, len(processed), batch_size), desc="GENERator Embedding"):
             batch = processed[i : i + batch_size]
 
-            # 尽量拿到 special_tokens_mask
-            tok_kwargs: Dict[str, Any] = dict(
-                max_length=self.max_len,
+            # 与官方一致：right padding, add_special_tokens, max_length
+            encoded = self.tokenizer(
+                batch,
+                add_special_tokens=True,
                 return_tensors="pt",
                 padding=True,
                 truncation=True,
-                add_special_tokens=True,
+                max_length=self.max_len,
             )
-            if exclude_special_tokens:
-                tok_kwargs["return_special_tokens_mask"] = True
-
-            encoded = self.tokenizer(batch, **tok_kwargs)
 
             input_ids = encoded["input_ids"].to(self.device)
             attention_mask = encoded["attention_mask"].to(self.device)
 
-            special_mask = None
-            if exclude_special_tokens and "special_tokens_mask" in encoded:
-                special_mask = encoded["special_tokens_mask"].to(self.device)  # 1 表示 special
+            with torch.inference_mode():
+                outputs = self.model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    output_hidden_states=True,
+                )
 
-            outputs = self.model(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                output_hidden_states=True,
-            )
+            # 最后一层 hidden states（与官方一致）
+            hidden_states = outputs.hidden_states[-1]  # (B, L, H)
+            if layer_index != -1:
+                li = layer_index
+                if li < 0:
+                    li = len(outputs.hidden_states) + li
+                hidden_states = outputs.hidden_states[li]
 
-            hidden_states = outputs.hidden_states
-            li = layer_index
-            if li < 0:
-                li = len(hidden_states) + li
-            token_embeddings = hidden_states[li]  # (B, L, H)
-
-            # valid_mask：既要是非 pad，也可选择排除 special
-            valid_mask = attention_mask.bool()
-            if special_mask is not None:
-                valid_mask = valid_mask & (~special_mask.bool())
+            token_embeddings = hidden_states
 
             if pool == "mean":
-                vm = valid_mask.unsqueeze(-1)  # (B, L, 1)
-                denom = vm.sum(dim=1).clamp(min=1)  # (B, 1)
-                emb = (token_embeddings * vm).sum(dim=1) / denom
+                # 官方 Option 2: Mean pooling over all tokens (按 attention_mask)
+                expanded_mask = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).to(torch.float32)
+                sum_embeddings = torch.sum(token_embeddings * expanded_mask, dim=1)
+                emb = sum_embeddings / expanded_mask.sum(dim=1).clamp(min=1)
 
             elif pool == "max":
-                # masked positions -> -inf
-                vm = valid_mask.unsqueeze(-1)
-                masked = token_embeddings.masked_fill(~vm, torch.finfo(token_embeddings.dtype).min)
+                # 兼容：按 attention_mask，排除 pad
+                valid_mask = attention_mask.bool().unsqueeze(-1)
+                masked = token_embeddings.masked_fill(
+                    ~valid_mask, torch.finfo(token_embeddings.dtype).min
+                )
                 emb = masked.max(dim=1).values
 
             elif pool in ("last_token", "eos"):
-                # 默认：最后一个非 pad token
-                last_idx = self._last_nonpad_index(attention_mask)  # 用 attention_mask（含 special）更稳
-                if pool == "eos" and (self.tokenizer.eos_token_id is not None):
-                    eos_id = int(self.tokenizer.eos_token_id)
-                    # 找最后一个 eos（如果存在），否则回退 last_idx
-                    is_eos = (input_ids == eos_id) & attention_mask.bool()
-                    # 反向 argmax 找最后一个 True
-                    rev = torch.flip(is_eos, dims=[1])
-                    rev_pos = rev.float().argmax(dim=1)
-                    has_eos = is_eos.any(dim=1)
-                    eos_idx = input_ids.size(1) - 1 - rev_pos
-                    idx = torch.where(has_eos, eos_idx, last_idx)
-                else:
-                    idx = last_idx
-
-                emb = token_embeddings[torch.arange(token_embeddings.size(0), device=self.device), idx]
+                # 官方 Option 1: Last token (EOS) embedding
+                last_token_indices = attention_mask.sum(dim=1) - 1
+                emb = token_embeddings[
+                    torch.arange(token_embeddings.size(0), device=self.device),
+                    last_token_indices,
+                    :,
+                ]
 
             else:
                 raise ValueError(f"Unknown pooling strategy: {pool}")
 
             results.append(emb.detach().float().cpu())
 
-            del input_ids, attention_mask, outputs, hidden_states
+            del input_ids, attention_mask, outputs, token_embeddings
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
@@ -326,7 +304,7 @@ if __name__ == "__main__":
         "ACGTAGACGT",    # 10bp -> pad 到 12bp（右侧补 A）
     ]
 
-    embs = m.embed_sequences(test_seqs, pooling="mean")  # ✅ pooling 也支持
+    embs = m.embed_sequences(test_seqs, pooling="last_token")
     print(f"\n[Embedding Shape]: {embs.shape}")
 
     scores = m.score_sequences(test_seqs, batch_size=2)

@@ -263,12 +263,13 @@ class NucleotideTransformerModel(BaseModel):
 
             # 编码（按 max_length 右侧 padding/truncation，参考官方实现）
             # 注意：tokenizer 内置 k-mer 编码（通常为 6-mer），直接对原始序列编码即可
-            # 参考代码没有指定 add_special_tokens，使用默认值
+            # truncation=True 确保超长序列被截断，避免 "expected length X (got Y)" 的 batch 报错
             enc = self.tokenizer.batch_encode_plus(
                 batch,
                 return_tensors="pt",
                 padding="max_length",
                 max_length=max_length,
+                truncation=True,
             )
             input_ids = enc["input_ids"].to(dev)                       # [B, L]
             # 官方示例用 "pad对比" 作为 mask

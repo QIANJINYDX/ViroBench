@@ -31,6 +31,7 @@ def run(
     model_name: str,
     dataset_name: str,
     results_root_name: str = "results",
+    model_dir: str | None = None,
 ) -> None:
     print(f"[INFO] model_name = {model_name}")
     print(f"[INFO] dataset_name = {dataset_name}")
@@ -166,6 +167,34 @@ def run(
             device=None,
             max_length=16384,
         )
+    elif "hyena_local" in model_name:
+        from models.hyenadna_local import HyenaDNALocal
+        if "hyena_local" == model_name:
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_hg38_hf"
+        elif model_name == "hyena_local-12M-mini-virus":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-12M-mini-virus"
+        elif model_name == "hyena_local-12M-virus":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-12M-virus"
+        elif model_name == "hyena_local-test":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-test"
+        elif model_name == "hyena_local-436k-virus":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-436k-virus"
+        elif model_name == "hyena_local-3.2M-virus":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-3.2M-virus"
+        elif model_name == "hyena_local-253M":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-253M"
+        else:
+            if model_dir is None:
+                raise ValueError(
+                    f"未预定义模型 {model_name} 的路径，请通过 --model_dir 指定模型目录"
+                )
+            MODEL_DIR = model_dir
+
+        model = HyenaDNALocal(
+            model_dir=MODEL_DIR,
+            device="cuda",
+            pretrain_root="/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna",
+        )
 
     if dataset_name == "genome-short":
         dataset = GenDataset(jsonl_path = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/data/all_viral/gen_data/genome_gen/short_sequences.jsonl")
@@ -173,6 +202,8 @@ def run(
         dataset = GenDataset(jsonl_path = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/data/all_viral/gen_data/genome_gen/medium_sequences.jsonl")
     elif dataset_name == "genome-long":
         dataset = GenDataset(jsonl_path = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/data/all_viral/gen_data/genome_gen/long_sequences.jsonl")
+
+    
 
     # 计算BPB
     # 直接使用 GenDataset，无需适配器（BPBEvaluator 已支持 (idx, sequence) 格式）
@@ -211,6 +242,7 @@ def run(
         print(f"  Valid samples: {stats.get('valid_count', 0)} / {stats.get('count', 0)}")
 
 """
+python script/run_all_ppl.py --model_name hyena_local-253M --dataset_name genome-short
 python script/run_all_ppl.py --model_name evo2_1b_base --dataset_name genome-short
 python script/run_all_ppl.py --model_name evo-1-8k-base --dataset_name genome-short
 python script/run_all_ppl.py --model_name evo-1.5-8k-base --dataset_name genome-short
@@ -232,6 +264,8 @@ def main():
     parser.add_argument("--results_root_name", required=False,
                         help="结果保存目录名称，默认为 results",
                         default="/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/results/Bpb")
+    parser.add_argument("--model_dir", required=False, default=None,
+                        help="模型目录路径，用于 hyena_local 等未在脚本中预定义路径的模型")
     args = parser.parse_args()
 
     # 确定结果保存目录
@@ -241,6 +275,7 @@ def main():
         args.model_name,
         args.dataset_name,
         results_root_name,
+        model_dir=args.model_dir,
     )
 
 

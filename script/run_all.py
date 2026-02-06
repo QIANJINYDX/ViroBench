@@ -434,11 +434,38 @@ def run(
             sample_length=min(512, max_length or 512),
         )
     elif "hyena_local" in model_name:
+        MODEL_DIR = None
         from models.hyenadna_local import HyenaDNALocal
-        if "hyena_local" == model_name:
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_hg38_hf"
-        elif model_name == "hyena_local-12M-mini-virus":
+        if model_name == "hyena_local-12M-mini-virus":
             MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-12M-mini-virus"
+        elif model_name == "hyena_local-12M-virus":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-12M-virus"
+        elif model_name == "hyena_local-test":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-test"
+        elif model_name == "hyena_local-436k-virus":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-436k-virus"
+        elif model_name == "hyena_local-3.2M-virus":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-3.2M-virus"
+        elif model_name == "hyena_local-253M":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-253M"
+        if MODEL_DIR is None:
+            MODEL_DIR = model_dir
+            normalized_model_dir = os.path.normpath(MODEL_DIR)
+            last_part = os.path.basename(normalized_model_dir)
+            if last_part == "hf":
+                time_part = os.path.basename(os.path.dirname(normalized_model_dir))
+                date_part = os.path.basename(os.path.dirname(os.path.dirname(normalized_model_dir)))
+                if time_part and date_part:
+                    model_name = f"{date_part}_{time_part}"
+                else:
+                    model_name = last_part
+            else:
+                model_name = last_part
+        
+        print("---------------------------------------当前模型---------------------------------------")
+        print(model_name)
+        print("模型路径：⬆️⬇️⬆️⬇️",MODEL_DIR)
+        print("---------------------------------------当前模型---------------------------------------")
         model = HyenaDNALocal(
             model_dir=MODEL_DIR,
             device="cuda",
@@ -657,10 +684,13 @@ def run(
             MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/GENERator-v2-prokaryote-3b-base"
         model = GENERatorModel(
             model_name=model_name,
-            model_path=MODEL_DIR)
+            model_path=MODEL_DIR,
+            tokenizer_padding_side="right",  # ✅ 与官方默认一致
+            kmer_pad_side="right",           # ✅ 关键：不要左侧补齐
+            )
         batch_size = 16
         # 与官方 sequence_understanding 一致：使用 last non-padded token (EOS) embedding，不用 max
-        emb_pool = "last_token"
+        emb_pool = "mean"
         max_length = 16384
         # GENERator config 中 hidden_size=2048；_infer 可能因 BFloat16 失败回退到 1024，导致分类头维度错误、MCC≈0
         _cfg = getattr(getattr(model, "model", None), "config", None)
@@ -1165,6 +1195,8 @@ def run(
         results_root, f"Classification/{dataset_name}/{model_name}/{window_len}_{train_num_windows}_{eval_num_windows}/{lr}/")
     embedding_save_dir= os.path.join(
         results_root, f"Classification/{dataset_name}/{model_name}/{window_len}_{train_num_windows}_{eval_num_windows}/embeddings/")
+    plot_image = os.path.join(
+        results_root, f"Classification/{dataset_name}/{model_name}/{window_len}_{train_num_windows}_{eval_num_windows}/plots/")
     evaluator = FineTuneSeqEvaluator(
         embedder=embedder,
         model=head,
@@ -1193,6 +1225,26 @@ def run(
     summary = evaluator.run()
     print("[OK] multitask summary:", summary.get("output_dir"))
 
+    # 记录并保存 embedding 提取与分类头训练用时
+    emb_sec = summary.get("time_embedding_extract_sec") or 0.0
+    head_sec = summary.get("time_head_training_sec") or 0.0
+    timing_records.append({
+        "阶段": "提取embedding",
+        "用时(秒)": emb_sec,
+        "model_name": model_name,
+        "dataset_name": dataset_name,
+    })
+    timing_records.append({
+        "阶段": "训练分类头",
+        "用时(秒)": head_sec,
+        "model_name": model_name,
+        "dataset_name": dataset_name,
+    })
+    if timing_log_csv:
+        save_timing_records(timing_records, timing_log_csv)
+    print(f"[INFO] 提取embedding用时: {emb_sec:.2f} 秒 ({emb_sec/60:.2f} 分钟)")
+    print(f"[INFO] 训练分类头用时: {head_sec:.2f} 秒 ({head_sec/60:.2f} 分钟)")
+
 """
 
 ssd
@@ -1209,18 +1261,30 @@ python script/run_all.py --model_name evo-1.5-8k-base --dataset_name c2-genus
 # hyenadna
 python script/run_all.py --model_name hyena_local --dataset_name RNA-taxon-genus
 
-python script/run_all.py --model_name hyena_local-12M-mini-virus --dataset_name RNA-taxon-genus
+python script/run_all.py --model_name hyena_local-12M-mini-virus --dataset_name DNA-taxon-genus --force_recompute_embeddings True
 
+python script/run_all.py --model_name hyena_local-test --dataset_name DNA-taxon-genus --force_recompute_embeddings True
+
+python script/run_all.py --model_name hyena_local --dataset_name DNA-taxon-genus --force_recompute_embeddings True
 
 python script/run_all.py --model_name nt-2.5b-1000g --dataset_name DNA-taxon-genus
 
-python script/run_all.py --model_name LucaOne-default-step36M --dataset_name DNA-taxon-genus --save_predictions True
+python script/run_all.py --model_name hyena_local-3.2M-virus --dataset_name DNA-taxon-genus --save_predictions True
 
 python script/run_all.py --model_name LucaVirus-default-step3.8M --dataset_name ALL-taxon-genus --save_predictions True
 
 # 快速测试
 python script/run_all.py --model_name nt-500m-human --dataset_name DNA-taxon-genus --force_recompute_embeddings True --train_num_windows 2 --eval_num_windows 4
-python script/run_all.py --model_name GENERator-v2-eukaryote-1.2b-base --dataset_name DNA-taxon-genus --force_recompute_embeddings True --train_num_windows 2 --eval_num_windows 4
+python script/run_all.py --model_name GENERator-v2-eukaryote-1.2b-base --dataset_name DNA-taxon-genus --force_recompute_embeddings True --early_stopping_patience 100 
+
+python script/run_all.py --model_name GENERator-v2-prokaryote-1.2b-base --dataset_name DNA-taxon-genus --force_recompute_embeddings True --train_num_windows 2 --eval_num_windows 4 --lr 1e-6
+
+
+python script/run_all.py --model_name hyena_local --dataset_name RNA-host-times --force_recompute_embeddings True --model_dir /inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-test --window_len 1024 --train_num_windows 4 --eval_num_windows 32
+
+python script/run_all.py --model_name hyena_local --dataset_name RNA-host-times --force_recompute_embeddings True --model_dir /inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-test --window_len 512
+
+
 """
 
 def main():
@@ -1302,9 +1366,9 @@ def main():
     parser.add_argument(
         "--early_stopping_metric",
         type=str,
-        default="accuracy",
-        choices=["mcc", "accuracy", "acc", "f1_macro", "f1"],
-        help="早停指标（默认 mcc，可选：mcc, accuracy/acc, f1_macro/f1）",
+        default="mcc",
+        choices=["mcc", "accuracy", "acc", "f1_macro", "f1", "auprc"],
+        help="早停指标（默认 mcc，可选：mcc, accuracy/acc, f1_macro/f1, auprc）",
     )
     parser.add_argument(
         "--force_recompute_embeddings",

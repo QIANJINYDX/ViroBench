@@ -2,6 +2,7 @@
 import argparse
 import csv
 import json
+import math
 import os
 import re
 import statistics
@@ -129,6 +130,9 @@ TASK_ORDER = [
 #     "MP-RNA",
 # ]
 
+# 全局忽略的模型：既不登记结果也不记录为未运行/零指标
+IGNORED_MODELS = {"BioFM-265M", "OmniReg-bigbird", "OmniReg-large"}
+
 # 模型显示顺序（None 表示空行分隔）
 MODEL_ORDER = [
     "CNN",
@@ -255,12 +259,13 @@ def _get_model_order_index(model_name: str) -> int:
 
 
 def _compute_mean_std(values: list) -> tuple:
-    """计算平均值和标准差。如果只有一个值，返回该值和0。如果没有值，返回None, None"""
+    """计算平均值和标准差。如果只有一个值，返回该值和0。如果没有值，返回None, None。忽略 NaN/Inf。"""
     if not values:
         return None, None
-    # 转为原生 Python float，避免 numpy 等类型导致 statistics.stdev 报错
+    # 转为原生 Python float，并过滤 NaN/Inf，避免 statistics.stdev 报错
     try:
         floats = [float(x) for x in values]
+        floats = [x for x in floats if math.isfinite(x)]
     except (ValueError, TypeError):
         return None, None
     if not floats:
@@ -301,6 +306,65 @@ def _parse_mean_std(value_str: str) -> tuple:
     except (ValueError, AttributeError):
         pass
     return None, None
+
+
+def _parse_metric_value(val):
+    """从指标值（float 或 'mean(std)' 字符串）解析出数值，用于判断是否为 0。解析失败返回 None。"""
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        return float(val)
+    if isinstance(val, str):
+        mean, _ = _parse_mean_std(val)
+        return mean
+    return None
+
+
+def _collect_zero_metric_entries(
+    task_names: list, rows: list, metric: str, current_task: str = None
+) -> list:
+    """从 rows 中收集指标为 0 的 (model, task) 列表。
+    current_task: 若提供则用此作为任务名（如 ALL-host-genus），并对 (model, current_task) 去重。
+    """
+    seen = set()
+    entries = []
+    task_display = current_task  # 最终写入的任务名
+    for row in rows:
+        if row is None:
+            continue
+        model = row.get("model", "")
+        for task in task_names:
+            task_metrics = row.get("metrics", {}).get(task, {})
+            v = task_metrics.get(metric)
+            num = _parse_metric_value(v)
+            if num is not None and abs(num) < 1e-9:
+                name = task_display if current_task else task
+                key = (model, name)
+                if key not in seen:
+                    seen.add(key)
+                    entries.append((model, name))
+    return entries
+
+
+def _export_zero_metric_csv(entries: list, output_path: str) -> str:
+    """将指标为 0 的 (model, task) 写入 CSV，表头：模型, 任务名。"""
+    if not entries:
+        return ""
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    try:
+        with open(output_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["模型", "任务名"])
+            for model, task in entries:
+                writer.writerow([model, task])
+        print(f"[INFO] Saved zero-metric CSV to: {output_path} ({len(entries)} entries)")
+        return output_path
+    except OSError as exc:
+        if "Disk quota exceeded" in str(exc):
+            print(f"[ERROR] {exc}")
+        else:
+            print(f"[ERROR] Failed to write zero-metric CSV: {exc}")
+        return ""
 
 
 def _compute_task_average(task_values: list) -> str:
@@ -388,6 +452,31 @@ def _select_closest_two_lrs(lr_metrics_list: list, task_names: list, metric: str
     return lr_metrics_list[:2]
 
 
+# 窗口配置目录名格式: {window_len}_{train_num_windows}_{eval_num_windows}，如 512_8_64, 1024_4_32
+WINDOW_CONFIG_PATTERN = re.compile(r"^\d+_\d+_\d+$")
+
+
+def _is_window_config(dir_name: str) -> bool:
+    """判断是否为窗口配置目录（如 512_8_64、1024_4_32）。"""
+    return bool(WINDOW_CONFIG_PATTERN.match(dir_name))
+
+
+def _topk_mean_std(values: list, k: int = 3) -> tuple:
+    """从数值列表中取最高的 k 个值，计算其平均值和标准差。
+    若不足 k 个则用全部。忽略非有限值。返回 (mean, std)，无有效值返回 (None, None)。"""
+    try:
+        floats = [float(x) for x in values]
+        floats = [x for x in floats if math.isfinite(x)]
+    except (ValueError, TypeError):
+        return None, None
+    if not floats:
+        return None, None
+    topk = sorted(floats, reverse=True)[:k]
+    if len(topk) == 1:
+        return topk[0], 0.0
+    return statistics.mean(topk), statistics.stdev(topk)
+
+
 def _merge_lr_metrics(all_lr_metrics: list, task_names: list, metric: str) -> dict:
     """合并多个学习率的指标结果，计算平均值(标准差)
     如果学习率数量大于2，会自动选择结果最接近的两个学习率
@@ -421,99 +510,113 @@ def _merge_lr_metrics(all_lr_metrics: list, task_names: list, metric: str) -> di
     return merged
 
 
-def _collect_model_rows(results_dir: str, metric: str = "mcc") -> tuple:
+def _collect_model_rows(
+    results_dir: str,
+    metric: str = "mcc",
+    window_configs: list = None,
+) -> tuple:
+    """收集模型结果。支持多窗口配置：从所有 (窗口, 学习率) 组合中取每个任务指标最高的前 3 个值，
+    对这三个值求平均和标准差作为该任务的 mean(std)。
+
+    Args:
+        results_dir: 任务结果根目录
+        metric: 指标名
+        window_configs: 要加载的窗口配置列表，如 ["512_8_64", "1024_4_32"]。None 表示加载所有窗口配置。
+    """
     # 第一步：收集所有模型的结果（按模型名称分组）
-    model_results = {}  # {model_name: [rows]}
+    model_results = {}  # {model_name: [rows]}，多窗口时每模型一行
     model_dirs = [
         name for name in os.listdir(results_dir)
         if os.path.isdir(os.path.join(results_dir, name))
     ]
-    
+    # 排除时间戳目录（纯数字+连字符）
+    model_dirs = [
+        name for name in model_dirs
+        if not re.match(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}", name)
+    ]
+
     task_names = None
     for model_name in model_dirs:
+        if model_name in IGNORED_MODELS:
+            continue
         model_dir = os.path.join(results_dir, model_name)
-        # 遍历配置目录: {window_len}_{train_num_windows}_{eval_num_windows}
         config_dirs = [
             name for name in os.listdir(model_dir)
             if os.path.isdir(os.path.join(model_dir, name)) and not name.startswith(".")
         ]
+        # 只保留窗口配置目录
+        if window_configs is not None:
+            config_dirs = [c for c in config_dirs if c in window_configs]
+        else:
+            config_dirs = [c for c in config_dirs if _is_window_config(c) and c != "embeddings"]
         config_dirs.sort()
-        
-        model_rows = []
+
+        # 收集该模型下所有 (窗口, 学习率) 的指标，按任务汇总为数值列表
+        all_values_by_task = {}  # task -> [float, ...]
+
         for config_dir_name in config_dirs:
             config_dir = os.path.join(model_dir, config_dir_name)
-            # 跳过 embeddings 目录
-            if config_dir_name == "embeddings":
-                continue
-            # 仅保留 512_8_64 配置
-            if config_dir_name != "512_8_64":
-                continue
-            
-            # 遍历 lr 目录，收集所有学习率的结果
             lr_dirs = [
                 name for name in os.listdir(config_dir)
                 if os.path.isdir(os.path.join(config_dir, name))
             ]
             lr_dirs.sort()
-            
-            # 收集该配置下所有学习率的结果
-            config_lr_metrics = []  # 存储 (lr_value, {task: {metric: value}}) 元组列表
-            
+
             for lr_dir_name in lr_dirs:
+                try:
+                    float(lr_dir_name)
+                except ValueError:
+                    continue
                 lr_dir = os.path.join(config_dir, lr_dir_name)
                 summary_path = os.path.join(lr_dir, "finetune_summary.json")
                 if not os.path.exists(summary_path):
-                    print(f"[WARN] Missing finetune_summary.json: {summary_path}")
                     continue
-                
                 try:
-                    # 解析学习率值
-                    try:
-                        lr_value = float(lr_dir_name)
-                    except ValueError:
-                        # 如果无法解析为浮点数，使用目录名作为标识
-                        lr_value = lr_dir_name
-                    
                     summary = _load_json(summary_path)
                     metrics = _extract_metrics(summary, [metric])
                     if task_names is None:
                         task_names = _get_task_names(summary)
-                    
-                    # 保存该学习率的指标结果和学习率值
-                    config_lr_metrics.append((lr_value, metrics))
+                    for task, task_metrics in metrics.items():
+                        val = task_metrics.get(metric)
+                        if val is not None:
+                            try:
+                                v = float(val)
+                                if math.isfinite(v):
+                                    all_values_by_task.setdefault(task, []).append(v)
+                            except (ValueError, TypeError):
+                                pass
                 except Exception as exc:
                     print(f"[WARN] Failed to load {summary_path}: {exc}")
                     continue
-            
-            # 处理收集到的学习率结果
-            if config_lr_metrics:
-                # 如果学习率数量大于2，选择结果最接近的两个学习率
-                if len(config_lr_metrics) > 2:
-                    selected_lr_metrics = _select_closest_two_lrs(config_lr_metrics, task_names, metric)
-                    if len(selected_lr_metrics) < len(config_lr_metrics):
-                        print(f"[INFO] Model {model_name}/{config_dir_name}: selected {len(selected_lr_metrics)} closest learning rates from {len(config_lr_metrics)} total")
-                    config_lr_metrics = selected_lr_metrics
-                
-                # 提取指标部分（去掉学习率值）
-                metrics_only = [metrics for _, metrics in config_lr_metrics]
-                # 统一使用平均值(标准差)格式（单个学习率时标准差为0）
-                merged_metrics = _merge_lr_metrics(metrics_only, task_names, metric)
-                model_display_name = f"{model_name}/{config_dir_name}"
-                row = {"model": model_display_name, "metrics": merged_metrics}
-                model_rows.append(row)
-                if len(config_lr_metrics) > 1:
-                    lr_values = [str(lr) for lr, _ in config_lr_metrics]
-                    print(f"[INFO] Model {model_name}/{config_dir_name}: merged {len(config_lr_metrics)} learning rates ({', '.join(lr_values)}) into mean(std) format")
-        
-        if model_rows:
-            model_results[model_name] = model_rows
+
+        if not all_values_by_task:
+            continue
+
+        # 每个任务取最高的前 3 个值，计算 mean 和 std
+        merged_metrics = {}
+        for task in task_names or []:
+            values = all_values_by_task.get(task, [])
+            mean, std = _topk_mean_std(values, k=3)
+            if mean is not None:
+                merged_metrics[task] = {metric: _format_mean_std(mean, std)}
+            else:
+                merged_metrics[task] = {metric: None}
+
+        row = {"model": model_name, "metrics": merged_metrics}
+        model_results[model_name] = [row]
+        n_vals = sum(len(v) for v in all_values_by_task.values())
+        if n_vals > 3:
+            print(f"[INFO] Model {model_name}: top-3 mean(std) from {n_vals} (window×lr) values across configs {config_dirs}")
     
-    # 第二步：按照 MODEL_ORDER 的顺序输出，遇到 None 时插入空行
+    # 第二步：按照 MODEL_ORDER 的顺序输出，遇到 None 时插入空行；忽略 IGNORED_MODELS
     all_rows = []
     for item in MODEL_ORDER:
         if item is None:
             # 插入空行
             all_rows.append(None)
+        elif item in IGNORED_MODELS:
+            # 全局忽略：不登记结果、不占位
+            continue
         elif item in model_results:
             # 添加该模型的所有结果
             all_rows.extend(model_results[item])
@@ -524,19 +627,21 @@ def _collect_model_rows(results_dir: str, metric: str = "mcc") -> tuple:
                 "metrics": {}  # 空的指标
             }
             all_rows.append(placeholder_row)
-    
-    # 第三步：添加不在 MODEL_ORDER 中的模型（排在最后）
+
+    # 第三步：添加不在 MODEL_ORDER 中的模型（排在最后）；忽略 IGNORED_MODELS
     for model_name in sorted(model_dirs):
+        if model_name in IGNORED_MODELS:
+            continue
         if model_name not in MODEL_ORDER and model_name in model_results:
             all_rows.extend(model_results[model_name])
 
     if task_names is None:
         task_names = []
-    
-    # 收集未运行的模型（在MODEL_ORDER中但不在model_results中）
+
+    # 收集未运行的模型（在 MODEL_ORDER 中但不在 model_results 中）；忽略 IGNORED_MODELS
     missing_models = []
     for item in MODEL_ORDER:
-        if item is not None and item not in model_results:
+        if item is not None and item not in IGNORED_MODELS and item not in model_results:
             missing_models.append(item)
     
     return task_names, all_rows, missing_models
@@ -628,16 +733,24 @@ def _export_missing_models_csv(missing_models: list, output_path: str) -> str:
         return ""
 
 
-def _export_task_csv(task: str, metric: str = "mcc", output_path: str = None, average_tasks: bool = False) -> str:
+def _export_task_csv(
+    task: str,
+    metric: str = "mcc",
+    output_path: str = None,
+    average_tasks: bool = False,
+    window_configs: list = None,
+) -> tuple:
+    """导出任务 CSV，返回 (output_path, zero_metric_entries)。任务名使用 ALL-host-genus 等规范名。"""
     results_dir = os.path.join(PROJECT_ROOT, SUPPORTED_TASKS[task])
-    task_names, rows, missing_models = _collect_model_rows(results_dir, metric)
+    task_names, rows, missing_models = _collect_model_rows(results_dir, metric, window_configs=window_configs)
+    zero_entries = _collect_zero_metric_entries(task_names, rows, metric, current_task=task)
     if not rows:
         print(f"[WARN] No model results found under: {results_dir}")
         # 即使没有结果，也尝试导出未运行的模型列表
         if missing_models:
             missing_path = os.path.join(results_dir, f"missing_models.csv")
             _export_missing_models_csv(missing_models, missing_path)
-        return ""
+        return "", zero_entries
     if output_path is None:
         output_path = os.path.join(results_dir, f"metrics_{metric}.csv")
     try:
@@ -649,14 +762,19 @@ def _export_task_csv(task: str, metric: str = "mcc", output_path: str = None, av
             missing_path = os.path.join(results_dir, f"missing_models.csv")
             _export_missing_models_csv(missing_models, missing_path)
         
-        return output_path
+        # 若存在指标为 0 的 (模型, 任务)，写入 zero_metric CSV
+        if zero_entries:
+            zero_path = os.path.join(results_dir, f"zero_metric_{metric}.csv")
+            _export_zero_metric_csv(zero_entries, zero_path)
+        
+        return output_path, zero_entries
     except OSError as exc:
         if "Disk quota exceeded" in str(exc):
             print(f"[ERROR] {exc}")
             print(f"[INFO] Please free up disk space and try again.")
         else:
             print(f"[ERROR] Failed to write CSV file: {exc}")
-        return ""
+        return "", zero_entries
 
 
 # 汇总表列组：(组名, 该组下按 genus/times 区分的 task 列表，顺序：taxon-genus, taxon-times, host-genus, host-times)
@@ -740,7 +858,12 @@ def _build_summary_table(csv_paths: dict, metric: str):
     return pd.DataFrame(rows, columns=summary_cols)
 
 
-def _export_all_tasks_xlsx(xlsx_path: str, metric: str = "mcc", average_tasks: bool = False) -> int:
+def _export_all_tasks_xlsx(
+    xlsx_path: str,
+    metric: str = "mcc",
+    average_tasks: bool = False,
+    window_configs: list = None,
+) -> int:
     try:
         import pandas as pd
     except Exception as exc:
@@ -750,18 +873,22 @@ def _export_all_tasks_xlsx(xlsx_path: str, metric: str = "mcc", average_tasks: b
     os.makedirs(os.path.dirname(xlsx_path), exist_ok=True)
     csv_paths = {}
     missing_models_by_task = {}  # {task: [missing_models]}
+    all_zero_entries = []  # 汇总所有任务中指标为 0 的 (model, task)
 
-    # 收集所有任务的未运行模型
+    # 收集所有任务的未运行模型，并导出各任务 CSV 与零指标记录
     for task in TASK_ORDER:
         results_dir = os.path.join(PROJECT_ROOT, SUPPORTED_TASKS[task])
         if os.path.exists(results_dir):
-            _, _, missing_models = _collect_model_rows(results_dir, metric)
+            _, _, missing_models = _collect_model_rows(results_dir, metric, window_configs=window_configs)
             if missing_models:
                 missing_models_by_task[task] = missing_models
 
-        csv_path = _export_task_csv(task, metric, average_tasks=average_tasks)
+        csv_path, zero_entries = _export_task_csv(
+            task, metric, average_tasks=average_tasks, window_configs=window_configs
+        )
         if csv_path:
             csv_paths[task] = csv_path
+        all_zero_entries.extend(zero_entries)
 
     if not csv_paths and not missing_models_by_task:
         print("[WARN] No CSV files generated and no missing models found.")
@@ -798,6 +925,15 @@ def _export_all_tasks_xlsx(xlsx_path: str, metric: str = "mcc", average_tasks: b
                 missing_df = pd.DataFrame(missing_data)
                 missing_df.to_excel(writer, sheet_name="missing_models", index=False)
                 print(f"[INFO] Found {len(missing_data)} missing model entries across {len(missing_models_by_task)} tasks")
+        
+        # 汇总所有任务中指标为 0 的 (模型, 任务名)，写入 xlsx 的 zero_metric 表并同时写 CSV
+        if all_zero_entries:
+            zero_df = pd.DataFrame(all_zero_entries, columns=["模型", "任务名"])
+            zero_df.to_excel(writer, sheet_name="zero_metric", index=False)
+            print(f"[INFO] Saved zero_metric sheet ({len(all_zero_entries)} entries).")
+            results_dir = os.path.join(PROJECT_ROOT, "results")
+            zero_csv_path = os.path.join(results_dir, f"zero_metric_{metric}.csv")
+            _export_zero_metric_csv(all_zero_entries, zero_csv_path)
         
         # 手动关闭，避免在 with 语句退出时出错
         # ExcelWriter 的 close() 方法会自动保存
@@ -960,19 +1096,36 @@ def main() -> int:
         action="store_true",
         help="If set, compute and add average column for multi-task results.",
     )
+    parser.add_argument(
+        "--windows",
+        type=str,
+        default=None,
+        metavar="CONFIGS",
+        help="要加载的窗口配置，逗号分隔，如 512_8_64,1024_4_32,2048_2_16。默认不指定则加载全部窗口配置；指定后只加载列出的配置。",
+    )
     args = parser.parse_args()
 
     # 规范化指标名称
     metric = _normalize_metric_name(args.metric)
+
+    window_configs = None
+    if args.windows:
+        window_configs = [w.strip() for w in args.windows.split(",") if w.strip()]
 
     if args.task == "all":
         if args.output is None:
             output_path = os.path.join(PROJECT_ROOT, "results", f"all_metrics_{metric}.xlsx")
         else:
             output_path = args.output
-        return _export_all_tasks_xlsx(output_path, metric, average_tasks=args.average_tasks)
+        return _export_all_tasks_xlsx(
+            output_path, metric, average_tasks=args.average_tasks, window_configs=window_configs
+        )
 
-    _export_task_csv(args.task, metric, args.output, average_tasks=args.average_tasks)
+    _export_task_csv(
+        args.task, metric, args.output,
+        average_tasks=args.average_tasks,
+        window_configs=window_configs,
+    )
     return 0
 
 

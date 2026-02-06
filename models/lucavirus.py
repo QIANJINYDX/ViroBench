@@ -46,7 +46,8 @@ class LucaVirusModel(BaseModel):
         model_path_abs = os.path.abspath(self.model_path)
         if model_path_abs not in sys.path:
             sys.path.insert(0, model_path_abs)
-
+        print(f"model_path_abs: {model_path_abs}")
+        print(f"self.model_path: {self.model_path}")
         self.tokenizer = AutoTokenizer.from_pretrained(
             self.model_path,
             trust_remote_code=True,
