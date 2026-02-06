@@ -1,10 +1,10 @@
 # ViroBench: Viral Understanding & Safety Benchmark for Nucleotide Foundation Models
 
-[📊 **Framework overview**](resource/virus-benchmark.pdf)
+![Framework overview](resource/20260206-171719.png)
 
-> **ViroBench** is a dual-axis diagnostic benchmark for **viral sequence modeling**, designed to evaluate both:
-> - **Understanding Axis**: taxonomy classification & host prediction
-> - **Biosecurity Axis**: genome modeling & CDS completion (risk-aware generation diagnostics)
+**ViroBench** is a dual-axis diagnostic benchmark for **viral sequence modeling**, designed to evaluate both:
+- **Understanding Axis**: taxonomy classification & host prediction
+- **Biosecurity Axis**: genome modeling & CDS completion (risk-aware generation diagnostics)
 
 **Key stats**
 - **58,314** viral samples curated from **NCBI** (GenBank + RefSeq), spanning **DNA / RNA / Unknown** nucleic-acid types  
@@ -12,7 +12,7 @@
 - **67 baselines** across diverse architectures & tokenizers  
 - **11 metrics** covering both classification quality and generation fidelity
 
-> This repository provides a unified, reproducible evaluation pipeline and diagnostic protocols for viral nucleotide foundation models (NFMs).
+This repository provides a unified, reproducible evaluation pipeline and diagnostic protocols for viral nucleotide foundation models (NFMs).
 
 ---
 
