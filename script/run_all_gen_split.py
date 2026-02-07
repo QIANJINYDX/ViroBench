@@ -38,6 +38,7 @@ def run(
     temperature: float = 1.0,
     top_k: int = 4,
     split_index: int = None,
+    model_dir: str = None,
 ) -> None:
     print(f"[INFO] model_name = {model_name}")
     print(f"[INFO] dataset_name = {dataset_name}")
@@ -97,6 +98,46 @@ def run(
             device_map="auto",
             torch_dtype=torch.bfloat16,
         )
+    elif "hyena_local" in model_name:
+        MODEL_DIR = None
+        from models.hyenadna_local import HyenaDNALocal
+        if model_name == "hyena_local-12M-mini-virus":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-12M-mini-virus"
+        elif model_name == "hyena_local-12M-virus":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-12M-virus"
+        elif model_name == "hyena_local-test":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-test"
+        elif model_name == "hyena_local-436k-virus":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-436k-virus"
+        elif model_name == "hyena_local-3.2M-virus":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-3.2M-virus"
+        elif model_name == "hyena_local-253M":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-253M"
+        if MODEL_DIR is None:
+            if model_dir is None:
+                raise ValueError(
+                    "model_name contains 'hyena_local' but no built-in path is set. "
+                    "Please pass --model_dir <path_to_model>."
+                )
+            MODEL_DIR = model_dir
+            normalized_model_dir = os.path.normpath(MODEL_DIR)
+            last_part = os.path.basename(normalized_model_dir)
+            if last_part == "hf":
+                time_part = os.path.basename(os.path.dirname(normalized_model_dir))
+                date_part = os.path.basename(os.path.dirname(os.path.dirname(normalized_model_dir)))
+                if time_part and date_part:
+                    model_name = f"{date_part}_{time_part}"
+                else:
+                    model_name = last_part
+            else:
+                model_name = last_part
+
+        model = HyenaDNALocal(
+            model_dir=MODEL_DIR,
+            device="cuda",
+            pretrain_root="/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna",
+        )
+    
     elif model_name == "Genos-1.2B" or model_name == "Genos-10B" or model_name == "Genos-10B-v2":
         from models.genos_model_gen import GenosModel
         HF_HOME = f"{MODEL_WEIGHT}/cache"
@@ -285,6 +326,8 @@ def main():
                         help="Top-k 采样参数，限制采样候选数量，默认 4")
     parser.add_argument("--split_index", type=int, default=None,
                         help="切分文件的索引（1-10），如果指定则使用 split_gen 目录下对应的文件，默认 None 使用原始文件")
+    parser.add_argument("--model_dir", type=str, default=None,
+                        help="hyena_local 类模型的自定义路径，当 model_name 不在内置列表时必传")
     args = parser.parse_args()
 
     # 确定结果保存目录
@@ -298,6 +341,7 @@ def main():
         temperature=args.temperature,
         top_k=args.top_k,
         split_index=args.split_index,
+        model_dir=args.model_dir,
     )
 
 

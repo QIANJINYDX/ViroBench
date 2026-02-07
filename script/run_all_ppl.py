@@ -168,10 +168,9 @@ def run(
             max_length=16384,
         )
     elif "hyena_local" in model_name:
+        MODEL_DIR = None
         from models.hyenadna_local import HyenaDNALocal
-        if "hyena_local" == model_name:
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_hg38_hf"
-        elif model_name == "hyena_local-12M-mini-virus":
+        if model_name == "hyena_local-12M-mini-virus":
             MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-12M-mini-virus"
         elif model_name == "hyena_local-12M-virus":
             MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-12M-virus"
@@ -183,12 +182,19 @@ def run(
             MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-3.2M-virus"
         elif model_name == "hyena_local-253M":
             MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-253M"
-        else:
-            if model_dir is None:
-                raise ValueError(
-                    f"未预定义模型 {model_name} 的路径，请通过 --model_dir 指定模型目录"
-                )
+        if MODEL_DIR is None:
             MODEL_DIR = model_dir
+            normalized_model_dir = os.path.normpath(MODEL_DIR)
+            last_part = os.path.basename(normalized_model_dir)
+            if last_part == "hf":
+                time_part = os.path.basename(os.path.dirname(normalized_model_dir))
+                date_part = os.path.basename(os.path.dirname(os.path.dirname(normalized_model_dir)))
+                if time_part and date_part:
+                    model_name = f"{date_part}_{time_part}"
+                else:
+                    model_name = last_part
+            else:
+                model_name = last_part
 
         model = HyenaDNALocal(
             model_dir=MODEL_DIR,
