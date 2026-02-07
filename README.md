@@ -2,6 +2,8 @@
 
 [![Hugging Face Dataset](https://img.shields.io/badge/🤗%20Hugging%20Face-Dataset-yellow)](https://huggingface.co/datasets/YDXX/ViroBench) [![ModelScope Dataset](https://img.shields.io/badge/📦%20ModelScope-Dataset-orange)](https://www.modelscope.cn/datasets/YDDDDD0/ViroBench) [![ViroBlend Pretraining](https://img.shields.io/badge/🤗%20ViroBlend-Pretraining%20Data-green)](https://huggingface.co/datasets/YDXX/ViroBlend)
 
+[![ViroHyena-436k](https://img.shields.io/badge/🤗%20ViroHyena--436k-blue)](https://huggingface.co/YDXX/ViroHyena-436k) [![ViroHyena-1m](https://img.shields.io/badge/🤗%20ViroHyena--1m-blue)](https://huggingface.co/YDXX/ViroHyena-1m) [![ViroHyena-6m](https://img.shields.io/badge/🤗%20ViroHyena--6m-blue)](https://huggingface.co/YDXX/ViroHyena-6m) [![ViroHyena-253m](https://img.shields.io/badge/🤗%20ViroHyena--253m-blue)](https://huggingface.co/YDXX/ViroHyena-253m)
+
 ![Framework overview](resource/20260206-171719.png)
 
 **ViroBench** is a dual-axis diagnostic benchmark for **viral sequence modeling**, designed to evaluate both:
@@ -84,16 +86,6 @@ This repository provides a unified, reproducible evaluation pipeline and diagnos
 ---
 
 ## 🧩 Models & Unified Evaluation Protocol
-
-### ViroHyena Pre-trained Models
-We release HyenaDNA-based viral foundation models on Hugging Face:
-
-| Model | Hugging Face |
-|-------|--------------|
-| ViroHyena-436k | [YDXX/ViroHyena-436k](https://huggingface.co/YDXX/ViroHyena-436k) |
-| ViroHyena-1m   | [YDXX/ViroHyena-1m](https://huggingface.co/YDXX/ViroHyena-1m)   |
-| ViroHyena-6m   | [YDXX/ViroHyena-6m](https://huggingface.co/YDXX/ViroHyena-6m)   |
-| ViroHyena-253m | [YDXX/ViroHyena-253m](https://huggingface.co/YDXX/ViroHyena-253m) |
 
 ### Classification: Frozen Encoder + Lightweight Head
 We adopt a unified evaluation protocol where the **backbone is frozen** and only a **lightweight head** is trained:
