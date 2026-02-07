@@ -85,6 +85,16 @@ This repository provides a unified, reproducible evaluation pipeline and diagnos
 
 ## 🧩 Models & Unified Evaluation Protocol
 
+### ViroHyena Pre-trained Models
+We release HyenaDNA-based viral foundation models on Hugging Face:
+
+| Model | Hugging Face |
+|-------|--------------|
+| ViroHyena-436k | [YDXX/ViroHyena-436k](https://huggingface.co/YDXX/ViroHyena-436k) |
+| ViroHyena-1m   | [YDXX/ViroHyena-1m](https://huggingface.co/YDXX/ViroHyena-1m)   |
+| ViroHyena-6m   | [YDXX/ViroHyena-6m](https://huggingface.co/YDXX/ViroHyena-6m)   |
+| ViroHyena-253m | [YDXX/ViroHyena-253m](https://huggingface.co/YDXX/ViroHyena-253m) |
+
 ### Classification: Frozen Encoder + Lightweight Head
 We adopt a unified evaluation protocol where the **backbone is frozen** and only a **lightweight head** is trained:
 1) extract a sequence-level embedding (pooling depends on model, e.g., final/mean/CLS)

@@ -122,3 +122,5 @@ script/run_model_all.sh
 script/test_only.py
 script/run_all_ppl.py
 Classification_lite.tar.gz
+=1.76
+resource/virus-benchmark.pdf

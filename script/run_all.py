@@ -480,6 +480,36 @@ def run(
             default_dim=256,
             sample_length=min(512, max_length or 512),
         )
+    elif model_name == "ViroHyena-436k" or model_name == "ViroHyena-1m" or model_name == "ViroHyena-6m" or model_name == "ViroHyena-253m":
+        MODEL_DIR = None
+        from models.hyenadna_local import HyenaDNALocal
+        if model_name == "ViroHyena-436k":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/ViroHyena-436k"
+        elif model_name == "ViroHyena-1m":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/ViroHyena-1m"
+        elif model_name == "ViroHyena-6m":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/ViroHyena-6m"
+        elif model_name == "ViroHyena-253m":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/ViroHyena-253m"
+        
+        print("---------------------------------------当前模型---------------------------------------")
+        print(model_name)
+        print("模型路径：⬆️⬇️⬆️⬇️",MODEL_DIR)
+        print("---------------------------------------当前模型---------------------------------------")
+        model = HyenaDNALocal(
+            model_dir=MODEL_DIR,
+            device="cuda",
+            pretrain_root="/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna",
+        )
+        batch_size = 64
+        emb_pool = "final"
+        max_length = 160000
+        hidden_size = _infer_embedding_dim_hyenadna(
+            model,
+            pool=emb_pool,
+            default_dim=256,
+            sample_length=min(512, max_length or 512),
+        )
 
     elif model_name == "nt-500m-human" or model_name == "nt-500m-1000g" or model_name == "nt-2.5b-1000g" or model_name == "nt-2.5b-ms" or model_name == "ntv2-50m-ms-3kmer" or model_name == "ntv2-50m-ms" or model_name == "ntv2-100m-ms" or model_name == "ntv2-250m-ms" or model_name == "ntv2-500m-ms":
         from models import NucleotideTransformerModel

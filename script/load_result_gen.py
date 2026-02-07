@@ -56,6 +56,11 @@ MODEL_ORDER = [
     "GENERator-v2-eukaryote-3b-base",
     "GENERator-v2-prokaryote-1.2b-base",
     "GENERator-v2-prokaryote-3b-base",
+    None,  # 空行
+    "ViroHyena-436k",
+    "ViroHyena-1m",
+    "ViroHyena-6m",
+    "ViroHyena-253m",
 ]
 
 

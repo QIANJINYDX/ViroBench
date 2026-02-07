@@ -201,6 +201,27 @@ def run(
             device="cuda",
             pretrain_root="/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna",
         )
+    elif model_name == "ViroHyena-436k" or model_name == "ViroHyena-1m" or model_name == "ViroHyena-6m" or model_name == "ViroHyena-253m":
+        MODEL_DIR = None
+        from models.hyenadna_local import HyenaDNALocal
+        if model_name == "ViroHyena-436k":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/ViroHyena-436k"
+        elif model_name == "ViroHyena-1m":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/ViroHyena-1m"
+        elif model_name == "ViroHyena-6m":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/ViroHyena-6m"
+        elif model_name == "ViroHyena-253m":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/ViroHyena-253m"
+        
+        print("---------------------------------------当前模型---------------------------------------")
+        print(model_name)
+        print("模型路径：⬆️⬇️⬆️⬇️",MODEL_DIR)
+        print("---------------------------------------当前模型---------------------------------------")
+        model = HyenaDNALocal(
+            model_dir=MODEL_DIR,
+            device="cuda",
+            pretrain_root="/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna",
+        )
 
     if dataset_name == "genome-short":
         dataset = GenDataset(jsonl_path = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/data/all_viral/gen_data/genome_gen/short_sequences.jsonl")

@@ -230,14 +230,34 @@ def main():
     collected: Dict[str, Dict[str, Dict[str, float]]] = {}
 
     for subfolder, model_name, jsonl_path in tqdm(tasks, desc="Subfolder / Model", unit=" model"):
+        model_dir = os.path.dirname(jsonl_path)
+        summary_path_new = os.path.join(model_dir, "bpb_summary_new.json")
+
+        # 若已存在 bpb_summary_new.json 则跳过，不重复更新
+        if os.path.isfile(summary_path_new):
+            try:
+                with open(summary_path_new, "r", encoding="utf-8") as f:
+                    summary = json.load(f)
+                stats = summary.get("all_statistics") or {}
+            except Exception:
+                stats = {}
+            if model_name not in collected:
+                collected[model_name] = {}
+            collected[model_name][subfolder] = {
+                "min": stats.get("min"),
+                "max": stats.get("max"),
+                "median": stats.get("median"),
+                "mean": stats.get("mean"),
+            }
+            tqdm.write(f"\n>>> Subfolder: {subfolder}  |  Model: {model_name}  |  (skip, bpb_summary_new.json exists)")
+            continue
+
         tqdm.write(f"\n>>> Subfolder: {subfolder}  |  Model: {model_name}  |  {jsonl_path}")
         res = process_jsonl_path(jsonl_path, subfolder, model_name)
         tqdm.write(f"    Updated: {res['updated']}, Unchanged: {res['unchanged']}, Skipped: {res['skipped']}")
         tqdm.write(f"    Written: {res['output_path']}")
 
         # 写入 bpb_summary_new.json
-        model_dir = os.path.dirname(jsonl_path)
-        summary_path_new = os.path.join(model_dir, "bpb_summary_new.json")
         stats = compute_statistics(res["bpb_values"])
         summary_orig = os.path.join(model_dir, "bpb_summary.json")
         if os.path.isfile(summary_orig):

@@ -556,30 +556,45 @@ class HyenaDNALocal:
         min_tokens_to_keep: int = 1,
     ) -> torch.Tensor:
         """
-        logits: (V,)
+        logits: (V,) 或 (B, V)；对 (B,V) 在最后一维上逐行做 top-k/top-p
         """
-        assert logits.dim() == 1
+        if logits.dim() == 1:
+            # 单条
+            next_logits = logits
+            if top_k > 0:
+                top_k = min(max(int(top_k), min_tokens_to_keep), next_logits.size(-1))
+                kth = torch.topk(next_logits, top_k).values[-1]
+                next_logits = torch.where(next_logits < kth, torch.full_like(next_logits, -float("inf")), next_logits)
+            if top_p < 1.0:
+                sorted_logits, sorted_idx = torch.sort(next_logits, descending=True)
+                probs = F.softmax(sorted_logits, dim=-1)
+                cumprobs = torch.cumsum(probs, dim=-1)
+                cutoff = cumprobs > float(top_p)
+                cutoff[:min_tokens_to_keep] = False
+                sorted_logits = torch.where(cutoff, torch.full_like(sorted_logits, -float("inf")), sorted_logits)
+                new_logits = torch.full_like(next_logits, -float("inf"))
+                new_logits.scatter_(0, sorted_idx, sorted_logits)
+                next_logits = new_logits
+            return next_logits
 
+        # (B, V)
+        B, V = logits.shape
+        out = logits.clone()
         if top_k > 0:
-            top_k = min(max(int(top_k), min_tokens_to_keep), logits.size(-1))
-            kth = torch.topk(logits, top_k).values[-1]
-            logits = torch.where(logits < kth, torch.full_like(logits, -float("inf")), logits)
-
+            top_k = min(max(int(top_k), min_tokens_to_keep), V)
+            kth = torch.topk(logits, top_k, dim=-1).values[:, -1]  # (B,)
+            out = torch.where(logits < kth.unsqueeze(-1), torch.full_like(out, -float("inf")), out)
         if top_p < 1.0:
-            sorted_logits, sorted_idx = torch.sort(logits, descending=True)
+            sorted_logits, sorted_idx = torch.sort(out, descending=True, dim=-1)
             probs = F.softmax(sorted_logits, dim=-1)
             cumprobs = torch.cumsum(probs, dim=-1)
-
             cutoff = cumprobs > float(top_p)
-            cutoff[:min_tokens_to_keep] = False
-
+            cutoff[:, :min_tokens_to_keep] = False
             sorted_logits = torch.where(cutoff, torch.full_like(sorted_logits, -float("inf")), sorted_logits)
-
-            new_logits = torch.full_like(logits, -float("inf"))
-            new_logits.scatter_(0, sorted_idx, sorted_logits)
-            logits = new_logits
-
-        return logits
+            new_logits = torch.full_like(out, -float("inf"))
+            new_logits.scatter_(1, sorted_idx, sorted_logits)
+            out = new_logits
+        return out
 
     @torch.no_grad()
     def generate(
@@ -597,11 +612,13 @@ class HyenaDNALocal:
         HyenaDNA 序列生成（手写 sampling，不依赖 transformers.generate）
         - 支持 prompt 为 str 或 List[str]
         - 若 prompt 为 str：会复制为 n_samples 条生成
+        - 当 len(prompts) > 1 时使用批量化生成（一次前向多条），提高 GPU 利用率
         """
         self._ensure_lm_model()
         model = self.lm_model
         tok = self.tokenizer
         dev = self._infer_model_input_device(model)
+        pad_id = self._get_pad_id_fallback(tok)
 
         # 规范 prompts
         if isinstance(prompt_seqs, str):
@@ -611,37 +628,76 @@ class HyenaDNALocal:
             if len(prompts) == 1 and int(n_samples) > 1:
                 prompts = prompts * int(n_samples)
 
+        n_tokens = int(n_tokens)
+        max_prompt_tokens = int(max_prompt_tokens) if max_prompt_tokens is not None else None
         outputs: List[str] = []
         model.eval()
 
+        def _decode_one(ids: torch.Tensor) -> str:
+            txt = tok.decode(ids, skip_special_tokens=True)
+            return (txt or "").replace(" ", "").strip()
+
         with torch.inference_mode():
-            for p in prompts:
+            if len(prompts) == 1:
+                # 单条：保持原有逻辑
+                p = prompts[0]
                 enc = tok(p, return_tensors="pt", add_special_tokens=False)
                 input_ids = enc["input_ids"].to(dev)
-
-                if max_prompt_tokens is not None and input_ids.size(1) > int(max_prompt_tokens):
-                    input_ids = input_ids[:, -int(max_prompt_tokens):]
-
-                for _ in range(int(n_tokens)):
+                if max_prompt_tokens is not None and input_ids.size(1) > max_prompt_tokens:
+                    input_ids = input_ids[:, -max_prompt_tokens:]
+                for _ in range(n_tokens):
                     out = model(input_ids=input_ids)
                     out = out[0] if isinstance(out, (tuple, list)) and len(out) > 0 else out
-                    logits = out.logits  # (1, L, V)
+                    logits = out.logits
                     next_logits = logits[0, -1, :].float()
-
                     if temperature is not None and float(temperature) > 0:
                         next_logits = next_logits / float(temperature)
-
-                    next_logits = self._top_k_top_p_filtering(
-                        next_logits, top_k=int(top_k), top_p=float(top_p)
-                    )
+                    next_logits = self._top_k_top_p_filtering(next_logits, top_k=int(top_k), top_p=float(top_p))
                     probs = F.softmax(next_logits, dim=-1)
-                    next_id = torch.multinomial(probs, num_samples=1)  # (1,)
-
+                    next_id = torch.multinomial(probs, num_samples=1)
                     input_ids = torch.cat([input_ids, next_id.view(1, 1)], dim=1)
+                outputs.append(_decode_one(input_ids[0]))
+            else:
+                # 批量化：左 padding，一次前向 (B, L)
+                enc_list = tok(prompts, return_tensors="pt", add_special_tokens=False, padding=True, truncation=False)
+                if "input_ids" in enc_list:
+                    input_ids = enc_list["input_ids"].to(dev)
+                else:
+                    # 若 tokenizer 不返回 padding，手动 pad
+                    ids_list = []
+                    for p in prompts:
+                        raw = tok(p, add_special_tokens=False)["input_ids"]
+                        if torch.is_tensor(raw):
+                            raw = raw.tolist()
+                        if raw and isinstance(raw[0], (list, torch.Tensor)):
+                            raw = raw[0].tolist() if torch.is_tensor(raw[0]) else raw[0]
+                        ids_list.append(raw)
+                    max_len = max(len(ids) for ids in ids_list)
+                    pad_id_int = int(pad_id) if torch.is_tensor(pad_id) else int(pad_id)
+                    padded = []
+                    for ids in ids_list:
+                        pad_len = max_len - len(ids)
+                        padded.append([pad_id_int] * pad_len + ids)
+                    input_ids = torch.tensor(padded, dtype=torch.long, device=dev)
 
-                txt = tok.decode(input_ids[0], skip_special_tokens=True)
-                txt = txt.replace(" ", "")  # char-level tokenizer 有时会带空格
-                outputs.append(txt)
+                if max_prompt_tokens is not None and input_ids.size(1) > max_prompt_tokens:
+                    input_ids = input_ids[:, -max_prompt_tokens:]
+
+                B = input_ids.size(0)
+                for _ in range(n_tokens):
+                    out = model(input_ids=input_ids)
+                    out = out[0] if isinstance(out, (tuple, list)) and len(out) > 0 else out
+                    logits = out.logits
+                    next_logits = logits[:, -1, :].float()
+                    if temperature is not None and float(temperature) > 0:
+                        next_logits = next_logits / float(temperature)
+                    next_logits = self._top_k_top_p_filtering(next_logits, top_k=int(top_k), top_p=float(top_p))
+                    probs = F.softmax(next_logits, dim=-1)
+                    next_id = torch.multinomial(probs, num_samples=1)
+                    input_ids = torch.cat([input_ids, next_id], dim=1)
+
+                for i in range(B):
+                    outputs.append(_decode_one(input_ids[i]))
 
         if return_list:
             return outputs

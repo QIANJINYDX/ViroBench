@@ -55,6 +55,11 @@ MODEL_ORDER = [
     "GENERator-v2-eukaryote-3b-base",
     "GENERator-v2-prokaryote-1.2b-base",
     "GENERator-v2-prokaryote-3b-base",
+    None,  # 空行
+    "ViroHyena-436k",
+    "ViroHyena-1m",
+    "ViroHyena-6m",
+    "ViroHyena-253m",
 ]
 
 
@@ -87,9 +92,11 @@ def _collect_model_rows(results_dir: str) -> tuple:
     for model_name in model_dirs:
         model_dir = os.path.join(results_dir, model_name)
         summary_path = os.path.join(model_dir, "bpb_summary_new.json")
-        
         if not os.path.exists(summary_path):
-            print(f"[WARN] Missing bpb_summary_new.json: {summary_path}")
+            # 回退到 bpb_summary.json（格式一致，含 all_statistics）
+            summary_path = os.path.join(model_dir, "bpb_summary.json")
+        if not os.path.exists(summary_path):
+            print(f"[WARN] Missing bpb_summary_new.json or bpb_summary.json: {model_dir}")
             continue
         
         try:

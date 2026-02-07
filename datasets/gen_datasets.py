@@ -15,18 +15,24 @@ class GenDataset(Dataset):
     
     Args:
         jsonl_path: Path to JSONL file (e.g., long_sequences.jsonl, medium_sequences.jsonl, short_sequences.jsonl)
+        max_length: Optional maximum sequence length; sequences longer than this are ignored. None means no limit.
     """
     
     def __init__(
         self,
         jsonl_path: str,
+        max_length: int | None = None,
     ):
         self.jsonl_path = jsonl_path
+        self.max_length = max_length
         
         # Load JSONL data and expand sequences
         print(f"[INFO] Loading data from {jsonl_path}...")
+        if max_length is not None:
+            print(f"[INFO] Max sequence length filter: {max_length} (longer sequences will be ignored)")
         self.data = []  # List of (sequence, taxid) tuples
         num_objects = 0
+        num_skipped_length = 0
         with open(jsonl_path, 'r', encoding='utf-8') as f:
             for line_num, line in enumerate(f, 1):
                 line = line.strip()
@@ -47,14 +53,20 @@ class GenDataset(Dataset):
                     num_objects += 1
                     # Each sequence becomes a separate sample, with taxid
                     for seq in sequences:
-                        if seq:  # Only add non-empty sequences
-                            self.data.append((seq, taxid))
+                        if not seq:
+                            continue
+                        if max_length is not None and len(seq) > max_length:
+                            num_skipped_length += 1
+                            continue
+                        self.data.append((seq, taxid))
                         
                 except json.JSONDecodeError as e:
                     print(f"[WARN] Skipping line {line_num}: JSON decode error - {e}")
                     continue
         
         print(f"[INFO] Loaded {len(self.data)} sequences from {jsonl_path} (expanded from {num_objects} JSON objects)")
+        if max_length is not None and num_skipped_length > 0:
+            print(f"[INFO] Skipped {num_skipped_length} sequences exceeding max_length={max_length}")
     
     def __len__(self) -> int:
         return len(self.data)

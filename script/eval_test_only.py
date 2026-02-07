@@ -555,7 +555,10 @@ def eval_test_only(result_dir: str, device: str = None):
     
     return metrics_by_task, report_by_task, cm_by_task
 
-
+"""
+用法示例：
+  python script/eval_test_only.py --result_dir /inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/results/Classification/ALL-taxon-genus/AIDO.DNA-7B/512_8_64/0.001
+"""
 def main():
     parser = argparse.ArgumentParser(description="只运行测试集评估")
     parser.add_argument(

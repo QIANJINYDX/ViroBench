@@ -9,28 +9,53 @@ from typing import Any, Dict, Optional, List, Tuple
 import numpy as np
 from tqdm.auto import tqdm
 
+# 与 script/bpb.py 一致：BPB 分母使用 sequence_chars - EXPECTED_OFFSET（预测的 base 数）
+LN2 = math.log(2.0)
+EXPECTED_OFFSET = 128  # char_count 期望为 sequence_chars - 128
 
-def ppl_details_to_bpb(details):
-    """
-    details: Evo2Model.get_ppl(..., return_details=True) 的返回
-             每个元素至少包含: avg_nll_token, token_count, char_count
-    返回: 每条样本的 bpb（float），无法计算则为 nan
-    """
-    out = []
-    ln2 = math.log(2.0)
 
-    for d in details:
+def ppl_details_to_bpb(
+    details: List[Dict[str, Any]],
+    sequence_char_counts: Optional[List[int]] = None,
+) -> List[float]:
+    """
+    将 get_ppl(..., return_details=True) 的返回转为 BPB。
+
+    策略（与 script/bpb.py 一致）：
+    - 若提供 sequence_char_counts，则用 expected_ch = sequence_chars - 128 作为分母计算 BPB。
+    - 否则回退为使用 detail 中的 char_count（兼容旧行为）。
+
+    details: 每元素至少包含 avg_nll_token, token_count，可选 char_count。
+    sequence_char_counts: 每条序列的字符数（base 数），与 details 一一对应。
+
+    返回: 每条样本的 bpb（float），无法计算则为 nan。
+    """
+    out: List[float] = []
+
+    for i, d in enumerate(details):
         avg = d.get("avg_nll_token", float("nan"))
         tok = int(d.get("token_count", 0) or 0)
-        ch  = int(d.get("char_count", 0) or 0)
 
-        if ch <= 0 or tok <= 0 or not math.isfinite(avg):
+        if tok <= 0 or not math.isfinite(avg):
             out.append(float("nan"))
             continue
 
-        total_nll = avg * tok                 # nat
-        nll_per_base = total_nll / ch         # nat/base
-        bpb = nll_per_base / ln2              # bits/base
+        if sequence_char_counts is not None and i < len(sequence_char_counts):
+            seq_chars = int(sequence_char_counts[i])
+            expected_ch = seq_chars - EXPECTED_OFFSET
+            if expected_ch <= 0:
+                out.append(float("nan"))
+                continue
+            ch = expected_ch
+        else:
+            ch = int(d.get("char_count", 0) or 0)
+            if ch <= 0:
+                out.append(float("nan"))
+                continue
+
+        total_nll = avg * tok           # nat
+        nll_per_base = total_nll / ch   # nat/base
+        bpb = nll_per_base / LN2        # bits/base
         out.append(float(bpb))
 
     return out
@@ -175,23 +200,25 @@ class BPBEvaluator:
                     batch_seqs,
                     return_details=True,
                 )
-                # print(details)
-                # exit()
-                # 转换为 BPB
-                batch_bpb = ppl_details_to_bpb(details)
-                
-                # 保存详细信息
+                # 使用 script/bpb.py 策略：分母为 sequence_chars - 128
+                batch_char_counts = [len(seq) for seq in batch_seqs]
+                batch_bpb = ppl_details_to_bpb(details, sequence_char_counts=batch_char_counts)
+
+                # 保存详细信息（char_count 存为 sequence_chars - 128，与 script/bpb.py 一致）
                 batch_taxids = taxids[start_idx:start_idx + self.batch_size]
                 for i, (seq, taxid, detail, bpb) in enumerate(
                     zip(batch_seqs, batch_taxids, details, batch_bpb)
                 ):
+                    seq_chars = len(seq)
+                    char_count_used = max(0, seq_chars - EXPECTED_OFFSET)
                     sample_detail = {
                         "sequence_index": start_idx + i,
                         "taxid": taxid,
                         "bpb": float(bpb),
                         "avg_nll_token": detail.get("avg_nll_token"),
                         "token_count": detail.get("token_count"),
-                        "char_count": detail.get("char_count"),
+                        "char_count": char_count_used,
+                        "sequence_chars": seq_chars,
                     }
                     # 保留其他可能的字段
                     for k, v in detail.items():

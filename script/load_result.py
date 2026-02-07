@@ -529,11 +529,7 @@ def _collect_model_rows(
         name for name in os.listdir(results_dir)
         if os.path.isdir(os.path.join(results_dir, name))
     ]
-    # 排除时间戳目录（纯数字+连字符）
-    model_dirs = [
-        name for name in model_dirs
-        if not re.match(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}", name)
-    ]
+    # 包含时间戳目录（如 2026-02-05_00-24-03-771786），与模型目录一样按窗口/学习率收集指标，显示名为 run_id
 
     task_names = None
     for model_name in model_dirs:

@@ -6,11 +6,13 @@ import random
 import re
 import traceback
 import math
-from typing import Dict
+from typing import Dict, Optional
 import torch
 import pandas as pd
 import time
 from datetime import datetime
+import multiprocessing
+import json
 
 # from CUR_TEST.plot import json_path
 
@@ -30,6 +32,21 @@ MODEL_WEIGHT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/mo
 DATASET_PATH = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/data/all_viral/gen_data"
 
 
+def _build_dataset(dataset_name: str, split_index: Optional[int]) -> GenDataset:
+    """根据 dataset_name 和 split_index 构建 GenDataset（不加载模型）。"""
+    if dataset_name == "cds-short":
+        jsonl_path = f"{DATASET_PATH}/split_gen/short_sequences-{split_index}.jsonl" if split_index is not None else f"{DATASET_PATH}/cds_gen/short_sequences.jsonl"
+        return GenDataset(jsonl_path=jsonl_path)
+    elif dataset_name == "cds-medium":
+        jsonl_path = f"{DATASET_PATH}/split_gen/medium_sequences-{split_index}.jsonl" if split_index is not None else f"{DATASET_PATH}/cds_gen/medium_sequences.jsonl"
+        return GenDataset(jsonl_path=jsonl_path)
+    elif dataset_name == "cds-long":
+        jsonl_path = f"{DATASET_PATH}/split_gen/long_sequences-{split_index}.jsonl" if split_index is not None else f"{DATASET_PATH}/cds_gen/long_sequences.jsonl"
+        return GenDataset(jsonl_path=jsonl_path)
+    else:
+        raise ValueError(f"Unknown dataset_name: {dataset_name}")
+
+
 def run(
     model_name: str,
     dataset_name: str,
@@ -39,6 +56,9 @@ def run(
     top_k: int = 4,
     split_index: int = None,
     model_dir: str = None,
+    gen_batch_size: int = 4,
+    num_workers: int = 1,
+    worker_id: Optional[int] = None,
 ) -> None:
     print(f"[INFO] model_name = {model_name}")
     print(f"[INFO] dataset_name = {dataset_name}")
@@ -48,7 +68,100 @@ def run(
         results_root = os.path.join(PROJECT_ROOT, results_root_name)
     os.makedirs(results_root, exist_ok=True)
     print(f"[INFO] results_root = {results_root}")
-    
+
+    # 先构建 dataset，便于多 worker 时主进程只做 spawn+merge、子进程只处理子集
+    dataset = _build_dataset(dataset_name, split_index)
+    n_total = len(dataset)
+
+    # 多 worker 主进程：只 spawn 子进程并合并结果，不加载模型
+    if num_workers > 1 and worker_id is None:
+        output_dir = os.path.join(
+            results_root, f"{dataset_name}/{model_name}/{split_index if split_index is not None else 'all'}/")
+        os.makedirs(output_dir, exist_ok=True)
+
+        def _worker_fn(wid: int) -> None:
+            env = os.environ.copy()
+            # 多卡时每个进程用一张卡（按 worker_id 轮询）
+            if torch.cuda.is_available() and torch.cuda.device_count() >= num_workers:
+                env["CUDA_VISIBLE_DEVICES"] = str(wid % torch.cuda.device_count())
+            run(
+                model_name=model_name,
+                dataset_name=dataset_name,
+                results_root_name=results_root_name,
+                prompt_len=prompt_len,
+                temperature=temperature,
+                top_k=top_k,
+                split_index=split_index,
+                model_dir=model_dir,
+                gen_batch_size=gen_batch_size,
+                num_workers=num_workers,
+                worker_id=wid,
+            )
+
+        procs = [multiprocessing.Process(target=_worker_fn, args=(i,)) for i in range(num_workers)]
+        for p in procs:
+            p.start()
+        for p in procs:
+            p.join()
+
+        # 合并各 worker 的 jsonl，按 sequence_index 排序，写 all_gen_per_sample.jsonl 并生成 summary
+        all_details = []
+        for i in range(num_workers):
+            p = os.path.join(output_dir, f"all_gen_per_sample_worker{i}.jsonl")
+            if not os.path.isfile(p):
+                continue
+            with open(p, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        all_details.append(json.loads(line))
+        all_details.sort(key=lambda d: d.get("sequence_index", 0))
+        per_sample_path = os.path.join(output_dir, "all_gen_per_sample.jsonl")
+        with open(per_sample_path, "w", encoding="utf-8") as f:
+            for d in all_details:
+                f.write(json.dumps(d, ensure_ascii=False) + "\n")
+        print(f"[INFO] Merged {len(all_details)} samples to {per_sample_path}")
+
+        # 用 GenEvaluator 的统计逻辑计算合并后的 summary
+        dummy_eval = GenEvaluator(model=None, dataset=[], output_dir=output_dir, batch_size=1)
+        stats = dummy_eval._compute_statistics(all_details)
+        summary = {
+            "output_dir": output_dir,
+            "prompt_len": prompt_len,
+            "temperature": temperature,
+            "top_k": top_k,
+            "enable_kmer_spectrum": getattr(dummy_eval, "enable_kmer_spectrum", True),
+            "kmer_k": getattr(dummy_eval, "kmer_k", -1),
+            "kmer_k_min": getattr(dummy_eval, "kmer_k_min", 1),
+            "kmer_k_max": getattr(dummy_eval, "kmer_k_max", 13),
+            "all_statistics": stats,
+            "all_size": len(all_details),
+        }
+        with open(os.path.join(output_dir, "gen_summary.json"), "w", encoding="utf-8") as f:
+            json.dump(summary, f, indent=2, ensure_ascii=False)
+        print(f"[OK] Generation evaluation (multi-worker) completed. Summary saved.")
+        stats = summary.get("all_statistics", {})
+        if stats:
+            print(f"[INFO] Generation Evaluation Statistics:")
+            for metric in ("exact_match_acc", "edit_distance", "alignment_identity"):
+                if metric in stats:
+                    s = stats[metric]
+                    for k, v in (("Mean", s.get("mean")), ("Median", s.get("median")), ("Std", s.get("std"))):
+                        if v is not None and not math.isnan(v):
+                            print(f"  {metric} {k}: {v:.6f}")
+            print(f"  Valid samples: {stats.get('valid_count', 0)} / {stats.get('count', 0)}")
+        return
+
+    # 多 worker 子进程或单进程：只处理本 worker 的 indices
+    if num_workers > 1 and worker_id is not None:
+        indices = list(range(worker_id, n_total, num_workers))
+        if not indices:
+            print(f"[INFO] Worker {worker_id}: no indices, skip.")
+            return
+        print(f"[INFO] Worker {worker_id}: processing {len(indices)} / {n_total} samples.")
+    else:
+        indices = None
+
     if model_name == "evo-1-8k-base" or model_name == "evo-1-131k-base" or model_name == "evo-1.5-8k-base":
         from models import Evo1Model
         MODEL_DIR = f"{MODEL_WEIGHT}/{model_name}"
@@ -213,25 +326,29 @@ def run(
             device=None,
             max_length=16384,
         )
+    elif model_name == "ViroHyena-436k" or model_name == "ViroHyena-1m" or model_name == "ViroHyena-6m" or model_name == "ViroHyena-253m":
+        MODEL_DIR = None
+        from models.hyenadna_local import HyenaDNALocal
+        if model_name == "ViroHyena-436k":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/ViroHyena-436k"
+        elif model_name == "ViroHyena-1m":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/ViroHyena-1m"
+        elif model_name == "ViroHyena-6m":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/ViroHyena-6m"
+        elif model_name == "ViroHyena-253m":
+            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/ViroHyena-253m"
+        
+        print("---------------------------------------当前模型---------------------------------------")
+        print(model_name)
+        print("模型路径：⬆️⬇️⬆️⬇️",MODEL_DIR)
+        print("---------------------------------------当前模型---------------------------------------")
+        model = HyenaDNALocal(
+            model_dir=MODEL_DIR,
+            device="cuda",
+            pretrain_root="/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna",
+        )
 
-    if dataset_name == "cds-short":
-        if split_index is not None:
-            jsonl_path = f"{DATASET_PATH}/split_gen/short_sequences-{split_index}.jsonl"
-        else:
-            jsonl_path = f"{DATASET_PATH}/cds_gen/short_sequences.jsonl"
-        dataset = GenDataset(jsonl_path=jsonl_path)
-    elif dataset_name == "cds-medium":
-        if split_index is not None:
-            jsonl_path = f"{DATASET_PATH}/split_gen/medium_sequences-{split_index}.jsonl"
-        else:
-            jsonl_path = f"{DATASET_PATH}/cds_gen/medium_sequences.jsonl"
-        dataset = GenDataset(jsonl_path=jsonl_path)
-    elif dataset_name == "cds-long":
-        if split_index is not None:
-            jsonl_path = f"{DATASET_PATH}/split_gen/long_sequences-{split_index}.jsonl"
-        else:
-            jsonl_path = f"{DATASET_PATH}/cds_gen/long_sequences.jsonl"
-        dataset = GenDataset(jsonl_path=jsonl_path)
+    # dataset 已在 run() 开头构建
 
     # 生成序列并评估
     # 直接使用 GenDataset，无需适配器（GenEvaluator 已支持 (idx, sequence, taxid) 格式）
@@ -240,21 +357,23 @@ def run(
     
     gen_evaluator = GenEvaluator(
         model=model,
-        dataset=dataset,              # 直接传入 GenDataset，无需 train/val/test 分割
+        dataset=dataset,
         output_dir=output_dir,
-        prompt_len=prompt_len,         # -1 表示使用序列长度的一半作为 prompt，>=0 表示固定长度
-        batch_size=1,                 # 可以根据模型大小调整
+        prompt_len=prompt_len,
+        batch_size=gen_batch_size,
         temperature=temperature,
         top_k=top_k,
         save_per_sample=True,
         save_summary=True,
+        indices=indices,
+        worker_id=worker_id,
     )
     
     print(f"[INFO] Starting generation evaluation...")
     print(f"[INFO] Dataset size: {len(dataset)}")
     print(f"[INFO] Output directory: {output_dir}")
     prompt_len_desc = "half of sequence length" if prompt_len == -1 else f"{prompt_len} bases"
-    print(f"[INFO] Generation parameters: prompt_len={prompt_len} ({prompt_len_desc}), temperature={temperature}, top_k={top_k}")
+    print(f"[INFO] Generation parameters: prompt_len={prompt_len} ({prompt_len_desc}), temperature={temperature}, top_k={top_k}, gen_batch_size={gen_batch_size}")
     gen_summary = gen_evaluator.run()
     print(f"[OK] Generation evaluation completed. Summary saved to: {gen_summary.get('output_dir')}")
     
@@ -304,7 +423,7 @@ python script/run_all_gen_split.py --model_name evo-1-8k-base --dataset_name cds
 # python script/run_all_gen_split.py --model_name evo-1.5-8k-base --dataset_name cds-short --split_index 1
 python script/run_all_gen_split.py --model_name hyenadna-tiny-16k --dataset_name cds-short --split_index 1
 python script/run_all_gen_split.py --model_name Genos-1.2B --dataset_name cds-short --split_index 1
-
+python script/run_all_gen_split.py --model_name ViroHyena-436k --dataset_name cds-long --split_index 1
 """
 
 def main():
@@ -328,6 +447,10 @@ def main():
                         help="切分文件的索引（1-10），如果指定则使用 split_gen 目录下对应的文件，默认 None 使用原始文件")
     parser.add_argument("--model_dir", type=str, default=None,
                         help="hyena_local 类模型的自定义路径，当 model_name 不在内置列表时必传")
+    parser.add_argument("--gen_batch_size", type=int, default=1,
+                        help="生成时每批处理的序列数；>1 时多条序列一次前向，提高 GPU 利用率；长序列若显存不足可设为 1，默认 4")
+    parser.add_argument("--num_workers", type=int, default=32,
+                        help="并行 worker 数（多进程）；>1 时按样本划分到各 worker，多卡时自动按 worker_id 分配 GPU，默认 1")
     args = parser.parse_args()
 
     # 确定结果保存目录
@@ -342,6 +465,9 @@ def main():
         top_k=args.top_k,
         split_index=args.split_index,
         model_dir=args.model_dir,
+        gen_batch_size=args.gen_batch_size,
+        num_workers=args.num_workers,
+        worker_id=None,
     )
 
 
