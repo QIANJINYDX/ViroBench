@@ -4,7 +4,7 @@ import os
 import json
 import math
 import warnings
-from typing import Any, Dict, Optional, List, Tuple, Sequence
+from typing import Any, Dict, Optional, List, Tuple
 
 import numpy as np
 from tqdm.auto import tqdm
@@ -270,9 +270,6 @@ class GenEvaluator:
         save_per_sample: bool = True,
         save_summary: bool = True,
         seed: int = 2025,
-        # 多进程：只处理 subset
-        indices: Optional[Sequence[int]] = None,
-        worker_id: Optional[int] = None,
     ):
         self.model = model
         self.dataset = dataset
@@ -281,8 +278,6 @@ class GenEvaluator:
 
         self.prompt_len = prompt_len
         self.batch_size = batch_size
-        self.indices = list(indices) if indices is not None else None
-        self.worker_id = worker_id
         self.temperature = temperature
         self.top_k = top_k
 
@@ -295,15 +290,12 @@ class GenEvaluator:
         self.save_summary = save_summary
         self.seed = seed
 
-    def _extract_sequences(self, dataset) -> Tuple[List[str], List[Any], List[int]]:
+    def _extract_sequences(self, dataset) -> Tuple[List[str], List[Any]]:
         sequences: List[str] = []
         taxids: List[Any] = []
-        orig_indices: List[int] = []
 
-        iterate_over = self.indices if self.indices is not None else range(len(dataset))
-        for i in iterate_over:
+        for i in range(len(dataset)):
             item = dataset[i]
-            orig_indices.append(i)
 
             # dict 格式
             if isinstance(item, dict):
@@ -343,10 +335,10 @@ class GenEvaluator:
                     f"数据集 __getitem__ 返回了 {len(item)} 个值，期望 2/3 或 dict"
                 )
 
-        return sequences, taxids, orig_indices
+        return sequences, taxids
 
     def _generate_for_split(self, dataset, split_name: str) -> List[Dict[str, Any]]:
-        sequences, taxids, orig_indices = self._extract_sequences(dataset)
+        sequences, taxids = self._extract_sequences(dataset)
 
         if not sequences:
             return []
@@ -359,12 +351,11 @@ class GenEvaluator:
                 "Please ensure the model provides generate(prompt_seqs, n_tokens, ...)."
             )
 
-        # 准备 prompt / gt（valid_indices = 在 sequences 中的下标，orig_valid_indices = 原始 dataset 下标，用于多 worker 合并）
+        # 准备 prompt / gt
         prompt_list: List[str] = []
         n_tokens_list: List[int] = []
         ground_truth_list: List[str] = []
         valid_indices: List[int] = []
-        orig_valid_indices: List[int] = []
 
         for i, seq in enumerate(sequences):
             if not isinstance(seq, str) or len(seq) <= 1:
@@ -383,7 +374,6 @@ class GenEvaluator:
             ground_truth_list.append(gt)
             n_tokens_list.append(len(gt))
             valid_indices.append(i)
-            orig_valid_indices.append(orig_indices[i])
 
         if not prompt_list:
             print(f"[{split_name}] No valid sequences for generation.")
@@ -406,7 +396,6 @@ class GenEvaluator:
             batch_gt = ground_truth_list[start_idx:start_idx + self.batch_size]
             batch_n_tokens = n_tokens_list[start_idx:start_idx + self.batch_size]
             batch_valid_indices = valid_indices[start_idx:start_idx + self.batch_size]
-            batch_orig_indices = orig_valid_indices[start_idx:start_idx + self.batch_size]
 
             n_tokens = max(batch_n_tokens) if batch_n_tokens else 0
 
@@ -424,8 +413,8 @@ class GenEvaluator:
                     else:
                         raise ValueError(f"Unexpected generate output type: {type(generated_seqs)}")
 
-                for i, (prompt, gt, n_tok, local_idx, orig_idx) in enumerate(
-                    zip(batch_prompts, batch_gt, batch_n_tokens, batch_valid_indices, batch_orig_indices)
+                for i, (prompt, gt, n_tok, orig_idx) in enumerate(
+                    zip(batch_prompts, batch_gt, batch_n_tokens, batch_valid_indices)
                 ):
                     gen_full = generated_seqs[i] if i < len(generated_seqs) else ""
                     gen_full = gen_full if isinstance(gen_full, str) else ""
@@ -454,7 +443,7 @@ class GenEvaluator:
                         )
                         metrics.update(kmer_metrics)
 
-                    taxid = taxids[local_idx] if local_idx < len(taxids) else None
+                    taxid = taxids[orig_idx] if orig_idx < len(taxids) else None
 
                     sample_detail = {
                         "sequence_index": orig_idx,
@@ -476,10 +465,10 @@ class GenEvaluator:
 
             except Exception as e:
                 warnings.warn(f"Error processing batch starting at {start_idx}: {str(e)}")
-                for i, (prompt, gt, n_tok, local_idx, orig_idx) in enumerate(
-                    zip(batch_prompts, batch_gt, batch_n_tokens, batch_valid_indices, batch_orig_indices)
+                for i, (prompt, gt, n_tok, orig_idx) in enumerate(
+                    zip(batch_prompts, batch_gt, batch_n_tokens, batch_valid_indices)
                 ):
-                    taxid = taxids[local_idx] if local_idx < len(taxids) else None
+                    taxid = taxids[orig_idx] if orig_idx < len(taxids) else None
                     all_details.append({
                         "sequence_index": orig_idx,
                         "taxid": taxid,
@@ -584,14 +573,13 @@ class GenEvaluator:
         results[f"{split_name}_size"] = len(details)
 
         if self.save_per_sample:
-            suffix = f"_worker{self.worker_id}" if self.worker_id is not None else ""
-            per_sample_path = os.path.join(self.output_dir, f"{split_name}_gen_per_sample{suffix}.jsonl")
+            per_sample_path = os.path.join(self.output_dir, f"{split_name}_gen_per_sample.jsonl")
             with open(per_sample_path, "w", encoding="utf-8") as f:
                 for detail in details:
                     f.write(json.dumps(detail, ensure_ascii=False) + "\n")
             print(f"[{split_name}] Saved per-sample results to {per_sample_path}")
 
-        if self.save_summary and self.worker_id is None:
+        if self.save_summary:
             summary_path = os.path.join(self.output_dir, "gen_summary.json")
             with open(summary_path, "w", encoding="utf-8") as f:
                 json.dump(results, f, indent=2, ensure_ascii=False)

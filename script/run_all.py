@@ -1303,6 +1303,8 @@ python script/run_all.py --model_name hyena_local-3.2M-virus --dataset_name DNA-
 
 python script/run_all.py --model_name LucaVirus-default-step3.8M --dataset_name ALL-taxon-genus --save_predictions True
 
+python script/run_all.py --model_name RNA-FM --dataset_name ALL-taxon-genus --save_predictions True --force_recompute_embeddings True
+
 # 快速测试
 python script/run_all.py --model_name nt-500m-human --dataset_name DNA-taxon-genus --force_recompute_embeddings True --train_num_windows 2 --eval_num_windows 4
 python script/run_all.py --model_name GENERator-v2-eukaryote-1.2b-base --dataset_name DNA-taxon-genus --force_recompute_embeddings True --early_stopping_patience 100 

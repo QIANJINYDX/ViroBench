@@ -57,39 +57,57 @@ def is_valid_cds(seq: str) -> bool:
     return True
 
 
+def _get_generated_continuation(row: Dict[str, Any]) -> Optional[str]:
+    """
+    从一行中解析出“生成续写部分”（与 ground_truth 等长的 continuation）。
+    兼容两种 JSONL 格式：
+    - generated_sequence（可为续写或 prompt+续写，会去掉 prompt）
+    - generated_continuation / generated_tail（已是续写）或 generated_full（会去掉 prompt）
+    """
+    prompt = row.get("prompt") if isinstance(row.get("prompt"), str) else None
+
+    # 优先使用 generated_sequence（部分 pipeline 导出时使用）
+    val = row.get("generated_sequence")
+    if val is not None and isinstance(val, str):
+        if prompt and val.startswith(prompt):
+            return val[len(prompt) :]
+        return val
+
+    # 否则使用 run_all_gen_split / run_all_gen 产出的字段
+    for key in ("generated_continuation", "generated_tail"):
+        val = row.get(key)
+        if val is not None and isinstance(val, str):
+            return val
+    val = row.get("generated_full")
+    if val is not None and isinstance(val, str) and prompt and val.startswith(prompt):
+        return val[len(prompt) :]
+    if val is not None and isinstance(val, str):
+        return val
+    return None
+
+
 def get_ground_truth_and_generated(row: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
     """
     从一行结果中解析出 ground_truth 与用于比较的生成序列（与 gt 等长或截断到 gt 长度）。
-    JSONL 格式：prompt, ground_truth, generated_sequence（generated_sequence 为续写，或为 prompt+续写）。
+    支持 generated_sequence 或 generated_continuation / generated_tail / generated_full。
     """
     gt = row.get("ground_truth")
     if gt is None or not isinstance(gt, str):
         return None, None
 
-    gen_seq = row.get("generated_sequence")
-    if gen_seq is None or not isinstance(gen_seq, str):
+    gen_cont = _get_generated_continuation(row)
+    if gen_cont is None:
         return gt, None
-
-    prompt = row.get("prompt")
-    if prompt and isinstance(prompt, str) and gen_seq.startswith(prompt):
-        gen_cont = gen_seq[len(prompt) :]
-    else:
-        gen_cont = gen_seq
     gen_compare = gen_cont[: len(gt)]
     return gt, gen_compare
 
 
 def get_generated_sequence_for_cds(row: Dict[str, Any]) -> Optional[str]:
     """
-    获取用于 is_CDS 判断的“生成序列”（continuation 部分），仅使用 generated_sequence，去掉 prompt 前缀（若有）。
+    获取用于 is_CDS 判断的“生成续写序列”（continuation 部分）。
+    支持 generated_sequence 或 generated_continuation / generated_tail / generated_full。
     """
-    val = row.get("generated_sequence")
-    if val is None or not isinstance(val, str):
-        return None
-    prompt = row.get("prompt")
-    if prompt and isinstance(prompt, str) and val.startswith(prompt):
-        return val[len(prompt) :]
-    return val
+    return _get_generated_continuation(row)
 
 
 def compute_metrics_for_sample(row: Dict[str, Any]) -> Dict[str, Any]:

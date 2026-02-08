@@ -207,6 +207,57 @@ def _export_task_csv(task: str, output_path: str = None) -> str:
         return ""
 
 
+def _build_average_sheet(task_dfs: dict):
+    """根据短/中/长三个任务的 DataFrame 构建平均结果表，模型为第一列。"""
+    import pandas as pd
+    import numpy as np
+
+    # 指标列名（与 METRICS 一致）
+    metric_cols = METRICS  # ["min", "max", "median", "mean"]
+    # 按 MODEL_ORDER 顺序收集模型，遇 None 插入空行
+    rows_out = []
+    for item in MODEL_ORDER:
+        if item is None:
+            rows_out.append(None)  # 空行
+            continue
+        # 从各任务中取该模型的指标
+        values_by_metric = {m: [] for m in metric_cols}
+        for task, df in task_dfs.items():
+            if "model" not in df.columns:
+                continue
+            match = df.loc[df["model"] == item]
+            if match.empty:
+                continue
+            for m in metric_cols:
+                if m not in match.columns:
+                    continue
+                val = match[m].iloc[0]
+                if val is not None and val != "" and not (isinstance(val, float) and np.isnan(val)):
+                    try:
+                        values_by_metric[m].append(float(val))
+                    except (TypeError, ValueError):
+                        pass
+        # 计算平均
+        row = [item]
+        for m in metric_cols:
+            arr = values_by_metric[m]
+            if arr:
+                row.append(np.mean(arr))
+            else:
+                row.append("")
+        rows_out.append((item, row))
+
+    # 转为 DataFrame：第一列 model，其余列为各指标平均
+    data = []
+    for x in rows_out:
+        if x is None:
+            data.append([""] * (1 + len(metric_cols)))
+        else:
+            _, row = x
+            data.append(row)
+    return pd.DataFrame(data, columns=["model"] + metric_cols)
+
+
 def _export_all_tasks_xlsx(xlsx_path: str) -> int:
     """导出所有任务到 XLSX 文件"""
     try:
@@ -229,13 +280,20 @@ def _export_all_tasks_xlsx(xlsx_path: str) -> int:
     writer = None
     try:
         writer = pd.ExcelWriter(xlsx_path)
+        task_dfs = {}  # task -> DataFrame
         for task in TASK_ORDER:
             csv_path = csv_paths.get(task)
             if not csv_path:
                 continue
             df = pd.read_csv(csv_path)
+            task_dfs[task] = df
             df.to_excel(writer, sheet_name=task, index=False)
-        
+
+        # 添加“短中长”三任务平均结果表：模型为第一列，列为 min/max/median/mean 的平均
+        if len(task_dfs) >= 1:
+            df_avg = _build_average_sheet(task_dfs)
+            df_avg.to_excel(writer, sheet_name="average", index=False)
+
         # 手动关闭，避免在 with 语句退出时出错
         # ExcelWriter 的 close() 方法会自动保存
         try:

@@ -24,6 +24,7 @@ from tqdm import tqdm
 
 LN2 = math.log(2.0)
 EXPECTED_OFFSET = 128  # char_count 期望为 sequence_chars - 128
+BPB_DECIMALS = 4  # 结果保留小数位数
 
 
 def recompute_bpb_one(d: Dict[str, Any]) -> tuple[float | None, bool]:
@@ -35,38 +36,52 @@ def recompute_bpb_one(d: Dict[str, Any]) -> tuple[float | None, bool]:
     - 否则用新 char_count 重算，返回 (新 bpb, True)
     """
     orig_bpb = d.get("bpb")
-    seq_chars = d.get("sequence_chars")
     char_count = d.get("char_count")
+    if char_count is not None and char_count != "":
+        try:
+            seq_chars = int(char_count) + 128
+        except (TypeError, ValueError):
+            seq_chars = d.get("sequence_chars")
+    else:
+        seq_chars = d.get("sequence_chars")
     avg_nll = d.get("avg_nll_token")
     tok_count = d.get("token_count", 0) or 0
 
     if seq_chars is None:
-        return (orig_bpb if isinstance(orig_bpb, (int, float)) and math.isfinite(orig_bpb) else None, False)
+        v = orig_bpb if isinstance(orig_bpb, (int, float)) and math.isfinite(orig_bpb) else None
+        return (round(v, BPB_DECIMALS) if v is not None else None, False)
 
     try:
         seq_chars = int(seq_chars)
     except (TypeError, ValueError):
-        return (orig_bpb if isinstance(orig_bpb, (int, float)) and math.isfinite(orig_bpb) else None, False)
+        v = orig_bpb if isinstance(orig_bpb, (int, float)) and math.isfinite(orig_bpb) else None
+        return (round(v, BPB_DECIMALS) if v is not None else None, False)
 
     expected_ch = seq_chars - EXPECTED_OFFSET
     if expected_ch <= 0:
-        return (orig_bpb if isinstance(orig_bpb, (int, float)) and math.isfinite(orig_bpb) else None, False)
+        v = orig_bpb if isinstance(orig_bpb, (int, float)) and math.isfinite(orig_bpb) else None
+        return (round(v, BPB_DECIMALS) if v is not None else None, False)
 
     if char_count is not None:
         try:
             char_count = int(char_count)
         except (TypeError, ValueError):
             char_count = None
-    if char_count == expected_ch:
-        return (orig_bpb if isinstance(orig_bpb, (int, float)) and math.isfinite(orig_bpb) else None, False)
+    # 仅在未截断且 char_count 已等于 expected_ch 时保留原 BPB；截断时 (tok_count < expected_ch) 必须重算
+    if char_count == expected_ch and tok_count >= expected_ch:
+        v = orig_bpb if isinstance(orig_bpb, (int, float)) and math.isfinite(orig_bpb) else None
+        return (round(v, BPB_DECIMALS) if v is not None else None, False)
 
     if avg_nll is None or not math.isfinite(avg_nll) or not tok_count or tok_count <= 0:
-        return (orig_bpb if isinstance(orig_bpb, (int, float)) and math.isfinite(orig_bpb) else None, False)
+        v = orig_bpb if isinstance(orig_bpb, (int, float)) and math.isfinite(orig_bpb) else None
+        return (round(v, BPB_DECIMALS) if v is not None else None, False)
 
+    # 截断时只计分了 tok_count 个碱基，分母用实际计分碱基数
+    effective_ch = min(expected_ch, int(tok_count))
     total_nll = float(avg_nll) * int(tok_count)
-    nll_per_base = total_nll / expected_ch
+    nll_per_base = total_nll / effective_ch
     new_bpb = nll_per_base / LN2
-    return (float(new_bpb), True)
+    return (round(float(new_bpb), BPB_DECIMALS), True)
 
 
 def compute_statistics(bpb_values: List[float]) -> Dict[str, float]:
@@ -90,12 +105,13 @@ def compute_statistics(bpb_values: List[float]) -> Dict[str, float]:
     median = sorted_v[m // 2] if m % 2 else (sorted_v[m // 2 - 1] + sorted_v[m // 2]) / 2.0
     variance = sum((x - mean) ** 2 for x in valid) / m
     std = math.sqrt(variance)
+    min_v, max_v = min(valid), max(valid)
     return {
-        "mean": mean,
-        "median": median,
-        "std": std,
-        "min": min(valid),
-        "max": max(valid),
+        "mean": round(mean, BPB_DECIMALS),
+        "median": round(median, BPB_DECIMALS),
+        "std": round(std, BPB_DECIMALS),
+        "min": round(min_v, BPB_DECIMALS),
+        "max": round(max_v, BPB_DECIMALS),
         "count": n,
         "valid_count": len(valid),
     }
@@ -133,9 +149,11 @@ def process_jsonl_path(jsonl_path: str, subfolder: str, model_name: str) -> Dict
             results["updated"] += 1
         else:
             results["unchanged"] += 1
-        # 统计用最终 bpb（可能为原值或新值）
+        # 统计用最终 bpb（可能为原值或新值），写入时统一保留四位小数
         final_bpb = d.get("bpb")
         if isinstance(final_bpb, (int, float)) and math.isfinite(final_bpb):
+            final_bpb = round(final_bpb, BPB_DECIMALS)
+            d["bpb"] = final_bpb
             bpb_values.append(final_bpb)
         new_lines.append(json.dumps(d, ensure_ascii=False))
 
@@ -197,6 +215,8 @@ def write_summary_csv(root: str, collected: Dict[str, Dict[str, Dict[str, float]
                     v = st.get(k)
                     if v is None or (isinstance(v, float) and not math.isfinite(v)):
                         return ""
+                    if isinstance(v, (int, float)):
+                        return f"{round(float(v), BPB_DECIMALS):.{BPB_DECIMALS}f}"
                     return str(v)
                 row.extend([_v("min"), _v("max"), _v("median"), _v("mean")])
         rows.append(tuple(row))

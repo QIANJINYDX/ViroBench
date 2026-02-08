@@ -22,8 +22,9 @@ def ppl_details_to_bpb(
     将 get_ppl(..., return_details=True) 的返回转为 BPB。
 
     策略（与 script/bpb.py 一致）：
-    - 若提供 sequence_char_counts，则用 expected_ch = sequence_chars - 128 作为分母计算 BPB。
-    - 否则回退为使用 detail 中的 char_count（兼容旧行为）。
+    - 若提供 sequence_char_counts，则 expected_ch = sequence_chars - 128，
+      截断时分母用实际计分碱基数：ch = min(expected_ch, token_count)。
+    - 否则使用 detail 中的 char_count，并同样做 ch = min(char_count, token_count)，避免截断时低估 BPB。
 
     details: 每元素至少包含 avg_nll_token, token_count，可选 char_count。
     sequence_char_counts: 每条序列的字符数（base 数），与 details 一一对应。
@@ -46,12 +47,15 @@ def ppl_details_to_bpb(
             if expected_ch <= 0:
                 out.append(float("nan"))
                 continue
-            ch = expected_ch
+            # 截断时只计分了 tok 个 token（字符级= tok 个碱基），分母不能大于实际计分碱基数（与 script/bpb.py 一致）
+            ch = min(expected_ch, tok)
         else:
             ch = int(d.get("char_count", 0) or 0)
             if ch <= 0:
                 out.append(float("nan"))
                 continue
+            # 与 script/bpb.py 一致：分母不超过实际计分 token 数，避免截断时低估 BPB
+            ch = min(ch, tok)
 
         total_nll = avg * tok           # nat
         nll_per_base = total_nll / ch   # nat/base
