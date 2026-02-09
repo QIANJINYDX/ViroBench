@@ -4,7 +4,7 @@
 
 [![ViroHyena-436k](https://img.shields.io/badge/🤗%20ViroHyena--436k-blue)](https://huggingface.co/YDXX/ViroHyena-436k) [![ViroHyena-1m](https://img.shields.io/badge/🤗%20ViroHyena--1m-blue)](https://huggingface.co/YDXX/ViroHyena-1m) [![ViroHyena-6m](https://img.shields.io/badge/🤗%20ViroHyena--6m-blue)](https://huggingface.co/YDXX/ViroHyena-6m) [![ViroHyena-253m](https://img.shields.io/badge/🤗%20ViroHyena--253m-blue)](https://huggingface.co/YDXX/ViroHyena-253m)
 
-![Framework overview](resource/20260206-171719.png)
+![Framework overview](resource/20260209-180850.png)
 
 **ViroBench** is a dual-axis diagnostic benchmark for **viral sequence modeling**, designed to evaluate both:
 - **Understanding Axis**: taxonomy classification & host prediction
@@ -52,7 +52,7 @@ This repository provides a unified, reproducible evaluation pipeline and diagnos
 - All variants use **8:1:1** train/val/test ratio
 
 **Metrics**
-- MCC, ACC, AUROC, F1, AUPRC
+- Precision,Recall,F1,AUPRC
 
 ---
 

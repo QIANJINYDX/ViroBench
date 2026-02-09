@@ -140,3 +140,14 @@ script/plot_pretrain_parallel_coords.py
 script/run_all_gen_split.py
 script/构建系统发育树
 script/logs_test_only/batch_test_only_record.csv
+configs
+script/load_result_genjsonl.py
+script/plot_auprc_multitask_over_time.py
+script/plot_pretrain_vs_old_boxplot.py
+script/batch_eval_test.sh
+script/blast.py
+script/build_af3_input.py
+script/eval_test_only.py
+script/run_cmd
+util/get_bpb.py
+table_metrics.md
