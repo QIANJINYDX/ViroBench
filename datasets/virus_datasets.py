@@ -607,7 +607,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Quick sanity checks for VirusSplitDatasets")
     ap.add_argument(
         "--split_dir",
-        default="/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/data/all_viral/cls_data/C1-times",
+        default="data/all_viral/cls_data/C1-times",
         help="Folder containing train/val/test.csv and optional *_sequences.(jsonl|csv)",
     )
     ap.add_argument(

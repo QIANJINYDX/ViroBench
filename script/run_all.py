@@ -1277,8 +1277,6 @@ def run(
 
 """
 
-ssd
-/inspire/ssd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/results
 CNN:evo2
 python script/run_all.py --model_name CNN --dataset_name c2-genus
 evo2_1b_base:evo2
