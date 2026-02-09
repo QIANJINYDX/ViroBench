@@ -214,7 +214,7 @@ class LucaVirusModel(BaseModel):
 # 官方风格测试：python -m models.lucavirus_model
 # ------------------------------------------------------------
 if __name__ == "__main__":
-    CKPT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/LucaVirus-default-step3.8M"
+    CKPT = "../../model_weight/LucaVirus-default-step3.8M"
 
     enc = LucaVirusModel(
         model_name="lucavirus-default",

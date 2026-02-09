@@ -244,7 +244,7 @@ class GenomeOceanModel(BaseModel):
 
 
 if __name__ == "__main__":
-    MODEL_PATH = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/GenomeOcean-500M"
+    MODEL_PATH = "../../model_weight/GenomeOcean-500M"
     
     print("=== Testing GenomeOcean Adapter (Fixed Scoring) ===")
     try:

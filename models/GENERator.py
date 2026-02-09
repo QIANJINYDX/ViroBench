@@ -6,10 +6,7 @@ import numpy as np
 from tqdm import tqdm
 from typing import List, Optional, Literal, Union, Dict, Any
 
-# ==========================================
-# 兼容补丁: 解决 'DNAKmerTokenizer' 缺少 _added_tokens_decoder
-#（尽量最小化对 transformers 的侵入）
-# ==========================================
+
 try:
     import transformers
     from transformers import PreTrainedTokenizer
@@ -290,7 +287,7 @@ class GENERatorModel(BaseModel):
 
 
 if __name__ == "__main__":
-    MODEL_PATH = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/GENERator-v2-prokaryote-1.2b-base"
+    MODEL_PATH = "../../model_weight/GENERator-v2-prokaryote-1.2b-base"
 
     m = GENERatorModel(
         "GENERator",

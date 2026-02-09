@@ -233,7 +233,7 @@ def main():
     parser.add_argument(
         "root",
         nargs="?",
-        default="/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/results/Bpb",
+        default="../../GeneShield/results/Bpb",
         help="Root folder containing subfolders (e.g. genome-long, genome-medium, genome-short), each with model dirs.",
     )
     args = parser.parse_args()

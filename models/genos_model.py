@@ -481,8 +481,8 @@ class GenosModel(BaseModel):
 # # ---------- 自测 ----------
 if __name__ == "__main__":
     # Genos模型路径
-    MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/Genos-1.2B"  # 替换为实际路径
-    HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model"  # 可选
+    MODEL_DIR = "../../model_weight/Genos-1.2B"  # 替换为实际路径
+    HF_HOME = "../../model"  # 可选
 
     m = GenosModel(
         model_name="Genos-1.2B",

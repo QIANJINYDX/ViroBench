@@ -522,8 +522,8 @@ class DNABERTModel(BaseModel):
 if __name__ == "__main__":
     import time
     # 根据你本地模型位置修改
-    MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/DNA_bert_3"
-    HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/model"
+    MODEL_DIR = "../../model_weight/DNA_bert_3"
+    HF_HOME = "../../model"
 
     m = DNABERTModel(
         model_name="DNABERT-3",

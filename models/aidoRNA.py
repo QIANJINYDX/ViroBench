@@ -245,10 +245,10 @@ if __name__ == "__main__":
     
     # 1. 权重路径 (AIDO.RNA 模型)
     # 例如: "/inspire/.../AIDO.RNA-1.6B"
-    MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/AIDO.RNA-1.6B" 
+    MODEL_DIR = "../../model_weight/AIDO.RNA-1.6B" 
     
     # 2. 代码路径 (通常和 AIDO.DNA 用的是同一套代码库)
-    CODE_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model/ModelGenerator/huggingface/aido.rna/aido_rna/models"
+    CODE_DIR = "../../model/ModelGenerator/huggingface/aido.rna/aido_rna/models"
 
     # 如果路径不存在，仅做代码演示
     if not os.path.exists(MODEL_DIR):

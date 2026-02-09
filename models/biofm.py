@@ -145,7 +145,7 @@ class BioFMModel:
 # ================= 使用示例 =================
 if __name__ == "__main__":
     # 替换为你本地的权重路径，或者直接用 huggingface ID
-    MODEL_PATH = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/BioFM-265M"
+    MODEL_PATH = "../../model_weight/BioFM-265M"
     
     # 初始化
     biofm = BioFMModel(model_path=MODEL_PATH, tokenizer_path=MODEL_PATH)

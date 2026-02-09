@@ -706,8 +706,8 @@ class GenosModel(BaseModel):
 # Quick self-test
 # -------------------------
 if __name__ == "__main__":
-    MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/Genos-1.2B"
-    HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model"
+    MODEL_DIR = "../../model_weight/Genos-1.2B"
+    HF_HOME = "../../model"
 
     m = GenosModel(
         model_name="Genos-1.2B",

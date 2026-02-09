@@ -10,7 +10,7 @@ for name in ['Mapping', 'MutableMapping', 'Sequence']:
     if not hasattr(collections, name):
         setattr(collections, name, getattr(collections.abc, name))
 
-ABS_RNABERT_PATH = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model/RNABERT"
+ABS_RNABERT_PATH = "../../model/RNABERT"
 if os.path.exists(ABS_RNABERT_PATH):
     if ABS_RNABERT_PATH not in sys.path:
         sys.path.append(ABS_RNABERT_PATH)
@@ -291,8 +291,8 @@ class RNABERTModel(BaseModel):
 # ---------- 自测部分 ----------
 if __name__ == "__main__":
     # 请根据实际路径修改
-    MODEL_PATH = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model/bert_mul_2.pth" 
-    CONFIG_PATH = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model/RNABERT/RNA_bert_config.json"
+    MODEL_PATH = "../../model/bert_mul_2.pth" 
+    CONFIG_PATH = "../../model/RNABERT/RNA_bert_config.json"
 
     m = RNABERTModel(
         model_name="RNABERT",

@@ -204,7 +204,7 @@ class AnkhModel(BaseModel):
 
 
 if __name__ == "__main__":
-    MODEL_PATH = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/ankh3-large" 
+    MODEL_PATH = "../../model_weight/ankh3-large" 
     
     print("=== Testing Ankh Adapter (DNA Input) ===")
     try:

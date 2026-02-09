@@ -548,7 +548,7 @@ class GenomeOceanModel(BaseModel):
 
 
 if __name__ == "__main__":
-    MODEL_PATH = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/GenomeOcean-500M"
+    MODEL_PATH = "../../model_weight/GenomeOcean-500M"
     m = GenomeOceanModel("GenomeOcean", model_path=MODEL_PATH)
 
     prompts = ["ATG", "CCGTTAGG"]

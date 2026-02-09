@@ -248,8 +248,8 @@ class BiRNABERTModel(BaseModel):
 
 
 if __name__ == "__main__":
-    MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/birna-bert"
-    TOKENIZER_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/birna-tokenizer"
+    MODEL_DIR = "../../model_weight/birna-bert"
+    TOKENIZER_DIR = "../../model_weight/birna-tokenizer"
 
  
     m = BiRNABERTModel(

@@ -340,7 +340,7 @@ class NTV3Model(BaseModel):
 if __name__ == "__main__":
     # 测试
     # MODEL_DIR = "InstaDeepAI/NTv3_8M_pre" # 或者本地路径
-    MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/NTv3_100M_pre"
+    MODEL_DIR = "../../model_weight/NTv3_100M_pre"
     
     try:
         m = NTV3Model(

@@ -200,7 +200,7 @@ class NTV3Model:
         return res.numpy() if return_numpy else res
 
 if __name__ == "__main__":
-    MODEL_PATH = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/NTv3_100M_post"
+    MODEL_PATH = "../../model_weight/NTv3_100M_post"
 
     try:
         model = NTV3Model(

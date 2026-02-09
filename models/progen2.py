@@ -17,7 +17,7 @@ def _register_progen():
         os.getcwd(),
         os.path.dirname(current_dir),
         os.path.dirname(os.path.dirname(current_dir)),
-        "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/progen2"
+        "../../model_weight/progen2"
     ]
     
     for path in search_paths:
@@ -335,7 +335,7 @@ class ProGen2Model(BaseModel):
 
 
 if __name__ == "__main__":
-    MODEL_PATH = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/progen2-base"
+    MODEL_PATH = "../../model_weight/progen2-base"
     
     print("=== Testing ProGen2 Adapter (DNA Input) ===")
     try:

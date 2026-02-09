@@ -323,7 +323,7 @@ class MPRNAModel(BaseModel):
 # ---------- 自测 ----------
 if __name__ == "__main__":
     # 请根据实际情况修改路径
-    MODEL_PATH = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/MP-RNA"
+    MODEL_PATH = "../../model_weight/MP-RNA"
     
     # 假设你没有单独的 HF_HOME 需求，或者在外部设置好了
     # 实例化 MP-RNA 模型

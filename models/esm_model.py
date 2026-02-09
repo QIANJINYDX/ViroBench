@@ -544,7 +544,7 @@ class ESMModel(BaseModel):
 
 if __name__ == "__main__":
     # 用户指定的路径（可能是目录）
-    MODEL_PATH = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/esm1b_t33_650M_UR50S/esm1b_t33_650M_UR50S.pt"
+    MODEL_PATH = "../../model_weight/esm1b_t33_650M_UR50S/esm1b_t33_650M_UR50S.pt"
     # 对应 ESM-1b 模型名
     MODEL_NAME = "esm1b_t33_650M_UR50S"
 

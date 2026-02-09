@@ -1302,10 +1302,10 @@ class OmniRegGPTModel(BaseModel):
 # =========================
 if __name__ == "__main__":
     # 根据你的实际路径修改
-    MODEL_CKPT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model/pytorch_model.bin"
-    TOKENIZER_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/gena-lm-bert-base-t2t"
-    OMNIREG_REPO = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model/OmniReg-GPT"
-    HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model"
+    MODEL_CKPT = "../../model/pytorch_model.bin"
+    TOKENIZER_DIR = "../../model_weight/gena-lm-bert-base-t2t"
+    OMNIREG_REPO = "../../model/OmniReg-GPT"
+    HF_HOME = "../../model"
 
     m = OmniRegGPTModel(
         model_name="OmniReg-GPT",

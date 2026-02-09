@@ -151,3 +151,4 @@ script/eval_test_only.py
 script/run_cmd
 util/get_bpb.py
 table_metrics.md
+models/physchem_distill.py

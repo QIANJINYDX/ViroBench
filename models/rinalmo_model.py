@@ -496,8 +496,8 @@ if __name__ == "__main__":
     # 1) 直接用 HF 名称：
     # MODEL_ID = "multimolecule/rinalmo-giga"
     # 2) 或者使用已经下载到本地的目录：
-    MODEL_ID = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/rinalmo-mega"
-    HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model"  # 可按需修改/置空
+    MODEL_ID = "../../model_weight/rinalmo-mega"
+    HF_HOME = "../../model"  # 可按需修改/置空
 
     # 1. 序列嵌入
     m = RiNALMoModel(

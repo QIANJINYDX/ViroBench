@@ -16,7 +16,7 @@ from vortex.model.utils import dotdict, print_rank_0, load_checkpoint
 from evo2.scoring import score_sequences, score_sequences_rc
 
 # 默认本地模型路径
-DEFAULT_MODEL_BASE_PATH = '/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight'
+DEFAULT_MODEL_BASE_PATH = '../../model_weight'
 
 MODEL_NAMES = [
     'evo2_40b',

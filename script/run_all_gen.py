@@ -26,8 +26,8 @@ from evaluators.finetune import FineTuneSeqEvaluator
 from datasets.gen_datasets import GenDataset
 from evaluators.gen import GenEvaluator
 
-MODEL_WEIGHT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight"
-DATASET_PATH = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/data/all_viral/gen_data"
+MODEL_WEIGHT = "../../model_weight"
+DATASET_PATH = "../../GeneShield/data/all_viral/gen_data"
 
 def run(
     model_name: str,
@@ -265,7 +265,7 @@ def main():
                         help="数据集名称，例如 ceval；传 all 将依次评估所有已支持的数据集")
     parser.add_argument("--results_root_name", required=False,
                         help="结果保存目录名称，默认为 results",
-                        default="/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/results/Generate")
+                        default="../../GeneShield/results/Generate")
     parser.add_argument("--prompt_len", type=int, default=129,
                         help="Prompt 长度，-1 表示使用序列长度的一半，>=0 表示固定长度，默认 -1")
     parser.add_argument("--temperature", type=float, default=1.0,

@@ -453,8 +453,8 @@ class GROVERModel(BaseModel):
 # # ---------- 自测 ----------
 if __name__ == "__main__":
     # 根据你本地模型位置修改
-    MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/GROVER"
-    HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model"
+    MODEL_DIR = "../../model_weight/GROVER"
+    HF_HOME = "../../model"
 
     m = GROVERModel(
         model_name="GROVER",

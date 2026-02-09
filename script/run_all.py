@@ -196,9 +196,9 @@ def run(
         print(f"[INFO] model_name = {model_name}")
         # seqlen-131k_d_model-256_n_layer-16
         from models import CaduceusModel
-        HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/cache"
+        HF_HOME = "../../model_weight/cache"
         os.environ["HF_HOME"] = HF_HOME
-        MODEL_DIR = f"/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/{model_name}"
+        MODEL_DIR = f"../../model_weight/{model_name}"
         model = CaduceusModel(
             model_name=model_name,
             model_path=MODEL_DIR,
@@ -214,8 +214,8 @@ def run(
         max_length = 131072
     elif model_name == "DNABERT-2-117M":
         from models import DNABERT2Model
-        MODEL_DIR = f"/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/{model_name}"
-        HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/cache"
+        MODEL_DIR = f"../../model_weight/{model_name}"
+        HF_HOME = "../../model_weight/cache"
         model = DNABERT2Model(model_name, MODEL_DIR,
                               HF_HOME, use_mlm_head=True)
         hidden_size = 4096
@@ -225,8 +225,8 @@ def run(
         from models import DNABERTModel
         # 提取 k-mer 值（例如 "DNABERT-6" -> "6"）
         kmer = model_name.split("-")[-1]
-        MODEL_DIR = f"/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/DNA_bert_{kmer}"
-        HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/cache"
+        MODEL_DIR = f"../../model_weight/DNA_bert_{kmer}"
+        HF_HOME = "../../model_weight/cache"
         model = DNABERTModel(
             model_name=f"DNABERT-{kmer}",
             model_path=MODEL_DIR,
@@ -251,8 +251,8 @@ def run(
         from models.dnaberts_model import DNABERTSModel
         # 提取 k-mer 值（例如 "DNABERT-6" -> "6"）
         kmer = model_name.split("-")[-1]
-        MODEL_DIR = f"/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/DNABERT-S"
-        HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/cache"
+        MODEL_DIR = f"../../model_weight/DNABERT-S"
+        HF_HOME = "../../model_weight/cache"
         model = DNABERTSModel(
             model_name=f"DNABERT-S",
             model_path=MODEL_DIR,
@@ -271,9 +271,9 @@ def run(
         hidden_size = 768
     elif model_name == "evo-1-8k-base" or model_name == "evo-1-131k-base" or model_name == "evo-1.5-8k-base":
         from models import Evo1Model
-        MODEL_DIR = f"/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/{model_name}"
-        CFG_PATH = f"/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/{model_name}/{model_name}_inference.yml"
-        HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/cache"
+        MODEL_DIR = f"../../model_weight/{model_name}"
+        CFG_PATH = f"../../model_weight/{model_name}/{model_name}_inference.yml"
+        HF_HOME = "../../model_weight/cache"
         model = Evo1Model(model_name, MODEL_DIR,
                           CFG_PATH, HF_HOME, device=None)
         hidden_size = 4096
@@ -281,7 +281,7 @@ def run(
         emb_pool = "final"
     elif model_name == "evo2_1b_base" or model_name == "evo2_7b_base" or model_name == "evo2_40b_base" or model_name == "evo2_40b" or model_name == "evo2_7b":
         from models import Evo2Model
-        MODEL_DIR = f"/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/{model_name}/{model_name}.pt"
+        MODEL_DIR = f"../../model_weight/{model_name}/{model_name}.pt"
         model = Evo2Model(model_name, MODEL_DIR)
         if model_name == "evo2_1b_base":
             # 更保守的默认 batch_size，避免 embedding 阶段显存/内存被杀
@@ -302,7 +302,7 @@ def run(
         emb_pool = "final"
     elif model_name == "gpn-msa":
         from models import GPNMSAModel
-        MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/gpn-msa-sapiens"
+        MODEL_DIR = "../../model_weight/gpn-msa-sapiens"
         MSA_PATH = f"/mnt/s3mount/peijunlin/gpn_msa/peijunlin/89.zarr"
         model = GPNMSAModel(model_name, MODEL_DIR, MSA_PATH, device="cuda")
         hidden_size = 768
@@ -312,9 +312,9 @@ def run(
         # python script/run_all.py --model_name LucaOne-gene-step36.8M --dataset_name DNA-taxon-genus
         from models.lucaonce import LucaOneModel
         if model_name == "LucaOne-default-step36M":
-            CKPT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/LucaOne-default-step36M"
+            CKPT = "../../model_weight/LucaOne-default-step36M"
         elif model_name == "LucaOne-gene-step36.8M":
-            CKPT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/LucaOne-gene-step36.8M"
+            CKPT = "../../model_weight/LucaOne-gene-step36.8M"
         model = LucaOneModel(
             model_name=model_name,
             model_path=CKPT,
@@ -335,9 +335,9 @@ def run(
         # python script/run_all.py --model_name LucaVirus-default-step3.8M --dataset_name DNA-taxon-genus
         from models.lucavirus import LucaVirusModel
         if model_name == "LucaVirus-default-step3.8M":
-            CKPT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/LucaVirus-default-step3.8M"
+            CKPT = "../../model_weight/LucaVirus-default-step3.8M"
         elif model_name == "LucaVirus-gene-step3.8M":
-            CKPT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/LucaVirus-gene-step3.8M"
+            CKPT = "../../model_weight/LucaVirus-gene-step3.8M"
         model = LucaVirusModel(
             model_name="lucavirus-default",
             model_path=CKPT,
@@ -361,11 +361,11 @@ def run(
         # python script/run_all.py --model_name gena-lm-bert-large-t2t --dataset_name DNA-taxon-genus
         from models.gena_lm import GenaLMModel
         if model_name == "gena-lm-bigbird-base-t2t":
-            CKPT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/gena-lm-bigbird-base-t2t"
+            CKPT = "../../model_weight/gena-lm-bigbird-base-t2t"
         elif model_name == "gena-lm-bert-base-t2t":
-            CKPT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/gena-lm-bert-base-t2t"
+            CKPT = "../../model_weight/gena-lm-bert-base-t2t"
         elif model_name == "gena-lm-bert-large-t2t":
-            CKPT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/gena-lm-bert-large-t2t"
+            CKPT = "../../model_weight/gena-lm-bert-large-t2t"
         model = GenaLMModel(
             model_name="gena-lm",
             model_path=CKPT,
@@ -384,24 +384,24 @@ def run(
         )
     elif model_name == "hyenadna" or model_name == "hyenadna-tiny-16k" or model_name == "hyenadna-tiny-1k" or model_name == "hyenadna-small-32k" or model_name == "hyenadna-medium-160k" or model_name == "hyenadna-medium-450k" or model_name == "hyenadna-large-1m":
         from models import HyenaDNAModel
-        HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/cache"
+        HF_HOME = "../../model_weight/cache"
         os.environ["HF_HOME"] = HF_HOME
 
         if model_name == "hyenadna-tiny-16k":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/hyenadna-tiny-16k-seqlen-d128-hf"
+            MODEL_DIR = "../../model_weight/hyenadna-tiny-16k-seqlen-d128-hf"
         elif model_name == "hyenadna-tiny-1k":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/hyenadna-tiny-1k-seqlen-hf"
+            MODEL_DIR = "../../model_weight/hyenadna-tiny-1k-seqlen-hf"
         elif model_name == "hyenadna-small-32k":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/hyenadna-small-32k-seqlen-hf"
+            MODEL_DIR = "../../model_weight/hyenadna-small-32k-seqlen-hf"
         elif model_name == "hyenadna-medium-160k":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/hyenadna-medium-160k-seqlen-hf"
+            MODEL_DIR = "../../model_weight/hyenadna-medium-160k-seqlen-hf"
         elif model_name == "hyenadna-medium-450k":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/hyenadna-medium-450k-seqlen-hf"
+            MODEL_DIR = "../../model_weight/hyenadna-medium-450k-seqlen-hf"
         elif model_name == "hyenadna-large-1m":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/hyenadna-large-1m-seqlen-hf"
+            MODEL_DIR = "../../model_weight/hyenadna-large-1m-seqlen-hf"
 
         # 从路径中提取模型名称（去掉路径前缀和可能的后缀）
-        # 例如: /inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/hyenadna-large-1m-seqlen-hf -> hyenadna-large-1m
+        # 例如: ../../model_weight/hyenadna-large-1m-seqlen-hf -> hyenadna-large-1m
         model_dir_name = os.path.basename(os.path.normpath(MODEL_DIR))
         # 提取模型名称（去掉 -seqlen-hf 等后缀）
         if "-seqlen-hf" in model_dir_name:
@@ -437,17 +437,17 @@ def run(
         MODEL_DIR = None
         from models.hyenadna_local import HyenaDNALocal
         if model_name == "hyena_local-12M-mini-virus":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-12M-mini-virus"
+            MODEL_DIR = "../../GeneShield/pretrain/hyena-dna/hyena_local-12M-mini-virus"
         elif model_name == "hyena_local-12M-virus":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-12M-virus"
+            MODEL_DIR = "../../GeneShield/pretrain/hyena-dna/hyena_local-12M-virus"
         elif model_name == "hyena_local-test":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-test"
+            MODEL_DIR = "../../GeneShield/pretrain/hyena-dna/hyena_local-test"
         elif model_name == "hyena_local-436k-virus":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-436k-virus"
+            MODEL_DIR = "../../GeneShield/pretrain/hyena-dna/hyena_local-436k-virus"
         elif model_name == "hyena_local-3.2M-virus":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-3.2M-virus"
+            MODEL_DIR = "../../GeneShield/pretrain/hyena-dna/hyena_local-3.2M-virus"
         elif model_name == "hyena_local-253M":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-253M"
+            MODEL_DIR = "../../GeneShield/pretrain/hyena-dna/hyena_local-253M"
         if MODEL_DIR is None:
             MODEL_DIR = model_dir
             normalized_model_dir = os.path.normpath(MODEL_DIR)
@@ -469,7 +469,7 @@ def run(
         model = HyenaDNALocal(
             model_dir=MODEL_DIR,
             device="cuda",
-            pretrain_root="/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna",
+            pretrain_root="../../GeneShield/pretrain/hyena-dna",
         )
         batch_size = 64
         emb_pool = "final"
@@ -484,13 +484,13 @@ def run(
         MODEL_DIR = None
         from models.hyenadna_local import HyenaDNALocal
         if model_name == "ViroHyena-436k":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/ViroHyena-436k"
+            MODEL_DIR = "../../GeneShield/pretrain/hyena-dna/ViroHyena-436k"
         elif model_name == "ViroHyena-1m":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/ViroHyena-1m"
+            MODEL_DIR = "../../GeneShield/pretrain/hyena-dna/ViroHyena-1m"
         elif model_name == "ViroHyena-6m":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/ViroHyena-6m"
+            MODEL_DIR = "../../GeneShield/pretrain/hyena-dna/ViroHyena-6m"
         elif model_name == "ViroHyena-253m":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/ViroHyena-253m"
+            MODEL_DIR = "../../GeneShield/pretrain/hyena-dna/ViroHyena-253m"
         
         print("---------------------------------------当前模型---------------------------------------")
         print(model_name)
@@ -499,7 +499,7 @@ def run(
         model = HyenaDNALocal(
             model_dir=MODEL_DIR,
             device="cuda",
-            pretrain_root="/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna",
+            pretrain_root="../../GeneShield/pretrain/hyena-dna",
         )
         batch_size = 64
         emb_pool = "final"
@@ -513,28 +513,28 @@ def run(
 
     elif model_name == "nt-500m-human" or model_name == "nt-500m-1000g" or model_name == "nt-2.5b-1000g" or model_name == "nt-2.5b-ms" or model_name == "ntv2-50m-ms-3kmer" or model_name == "ntv2-50m-ms" or model_name == "ntv2-100m-ms" or model_name == "ntv2-250m-ms" or model_name == "ntv2-500m-ms":
         from models import NucleotideTransformerModel
-        HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/cache"
+        HF_HOME = "../../model_weight/cache"
         os.environ["HF_HOME"] = HF_HOME
 
         nt_model_name = model_name
         if model_name == "nt-500m-human":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/nucleotide-transformer-500m-human-ref"
+            MODEL_DIR = "../../model_weight/nucleotide-transformer-500m-human-ref"
         elif model_name == "nt-500m-1000g":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/nucleotide-transformer-500m-1000g"
+            MODEL_DIR = "../../model_weight/nucleotide-transformer-500m-1000g"
         elif model_name == "nt-2.5b-1000g":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/nucleotide-transformer-2.5b-1000g"
+            MODEL_DIR = "../../model_weight/nucleotide-transformer-2.5b-1000g"
         elif model_name == "nt-2.5b-ms":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/nucleotide-transformer-2.5b-multi-species"
+            MODEL_DIR = "../../model_weight/nucleotide-transformer-2.5b-multi-species"
         elif model_name == "ntv2-50m-ms-3kmer":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/nucleotide-transformer-v2-50m-3mer-multi-species"
+            MODEL_DIR = "../../model_weight/nucleotide-transformer-v2-50m-3mer-multi-species"
         elif model_name == "ntv2-50m-ms":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/nucleotide-transformer-v2-50m-multi-species"
+            MODEL_DIR = "../../model_weight/nucleotide-transformer-v2-50m-multi-species"
         elif model_name == "ntv2-100m-ms":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/nucleotide-transformer-v2-100m-multi-species"
+            MODEL_DIR = "../../model_weight/nucleotide-transformer-v2-100m-multi-species"
         elif model_name == "ntv2-250m-ms":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/nucleotide-transformer-v2-250m-multi-species"
+            MODEL_DIR = "../../model_weight/nucleotide-transformer-v2-250m-multi-species"
         elif model_name == "ntv2-500m-ms":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/nucleotide-transformer-v2-500m-multi-species"
+            MODEL_DIR = "../../model_weight/nucleotide-transformer-v2-500m-multi-species"
 
         model = NucleotideTransformerModel(
             model_name=nt_model_name,
@@ -558,11 +558,11 @@ def run(
     elif model_name == "ntv3-8m-pre" or model_name == "ntv3-100m-pre" or model_name == "ntv3-650m-pre":
         from models.ntv3 import NTV3Model
         if model_name == "ntv3-8m-pre":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/NTv3_8M_pre"
+            MODEL_DIR = "../../model_weight/NTv3_8M_pre"
         elif model_name == "ntv3-100m-pre":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/NTv3_100M_pre"
+            MODEL_DIR = "../../model_weight/NTv3_100M_pre"
         elif model_name == "ntv3-650m-pre":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/NTv3_650M_pre"
+            MODEL_DIR = "../../model_weight/NTv3_650M_pre"
         model = NTV3Model(
             model_name=model_name,
             model_path=MODEL_DIR,
@@ -581,9 +581,9 @@ def run(
     elif model_name == "ntv3-100m-post" or model_name == "ntv3-650m-post":
         from models.ntv3_post import NTV3Model
         if model_name == "ntv3-100m-post":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/NTv3_100M_post"
+            MODEL_DIR = "../../model_weight/NTv3_100M_post"
         elif model_name == "ntv3-650m-post":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/NTv3_650M_post"
+            MODEL_DIR = "../../model_weight/NTv3_650M_post"
         model = NTV3Model(
             model_name=model_name,
             model_path=MODEL_DIR,
@@ -601,20 +601,20 @@ def run(
         )
     elif model_name == "Genos-1.2B" or model_name == "Genos-10B" or model_name == "Genos-10B-v2":
         from models import GenosModel
-        HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/cache"
+        HF_HOME = "../../model_weight/cache"
         os.environ["HF_HOME"] = HF_HOME
 
         # 设置模型路径
         if model_name == "Genos-1.2B":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/Genos-1.2B"
+            MODEL_DIR = "../../model_weight/Genos-1.2B"
             default_hidden_size = 1024  # Genos-1.2B 的默认 hidden_size
             batch_size = 16
         elif model_name == "Genos-10B":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/Genos-10B"
+            MODEL_DIR = "../../model_weight/Genos-10B"
             default_hidden_size = 2048  # Genos-10B 的默认 hidden_size（需要根据实际模型调整）
             batch_size = 8  # 10B 模型更大，使用较小的 batch_size
         elif model_name == "Genos-10B-v2":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/Genos-10B-v2/"
+            MODEL_DIR = "../../model_weight/Genos-10B-v2/"
             default_hidden_size = 2048  # Genos-10B-V2 的默认 hidden_size（需要根据实际模型调整）
             batch_size = 8  # 10B-V2 模型更大，使用较小的 batch_size
         model = GenosModel(
@@ -636,9 +636,9 @@ def run(
         )
     elif model_name == "gpn-brassicales":
         from models import GPNBrassicalesModel
-        HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/cache"
+        HF_HOME = "../../model_weight/cache"
         os.environ["HF_HOME"] = HF_HOME
-        MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/gpn-brassicales"
+        MODEL_DIR = "../../model_weight/gpn-brassicales"
         model = GPNBrassicalesModel(
             model_name=model_name,
             model_path=MODEL_DIR,
@@ -659,9 +659,9 @@ def run(
         )
     elif model_name == "GROVER" or model_name == "grover":
         from models import GROVERModel
-        HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/cache"
+        HF_HOME = "../../model_weight/cache"
         os.environ["HF_HOME"] = HF_HOME
-        MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/GROVER"
+        MODEL_DIR = "../../model_weight/GROVER"
         model = GROVERModel(
             model_name="GROVER",
             model_path=MODEL_DIR,
@@ -684,11 +684,11 @@ def run(
     elif model_name == "GenomeOcean-100M" or model_name == "GenomeOcean-500M" or model_name =="GenomeOcean-4B":
         from models.genomeocean import GenomeOceanModel
         if model_name == "GenomeOcean-100M":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/GenomeOcean-100M"
+            MODEL_DIR = "../../model_weight/GenomeOcean-100M"
         elif model_name == "GenomeOcean-500M":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/GenomeOcean-500M"
+            MODEL_DIR = "../../model_weight/GenomeOcean-500M"
         elif model_name == "GenomeOcean-4B":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/GenomeOcean-4B"
+            MODEL_DIR = "../../model_weight/GenomeOcean-4B"
         model = GenomeOceanModel(
             model_name=model_name,
             model_path=MODEL_DIR)
@@ -705,13 +705,13 @@ def run(
     elif model_name == "GENERator-v2-eukaryote-1.2b-base" or model_name == "GENERator-v2-eukaryote-3b-base" or model_name == "GENERator-v2-prokaryote-1.2b-base" or model_name == "GENERator-v2-prokaryote-3b-base":
         from models.GENERator import GENERatorModel
         if model_name == "GENERator-v2-eukaryote-1.2b-base":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/GENERator-v2-eukaryote-1.2b-base"
+            MODEL_DIR = "../../model_weight/GENERator-v2-eukaryote-1.2b-base"
         elif model_name == "GENERator-v2-eukaryote-3b-base":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/GENERator-v2-eukaryote-3b-base"
+            MODEL_DIR = "../../model_weight/GENERator-v2-eukaryote-3b-base"
         elif model_name == "GENERator-v2-prokaryote-1.2b-base":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/GENERator-v2-prokaryote-1.2b-base"
+            MODEL_DIR = "../../model_weight/GENERator-v2-prokaryote-1.2b-base"
         elif model_name == "GENERator-v2-prokaryote-3b-base":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/GENERator-v2-prokaryote-3b-base"
+            MODEL_DIR = "../../model_weight/GENERator-v2-prokaryote-3b-base"
         model = GENERatorModel(
             model_name=model_name,
             model_path=MODEL_DIR,
@@ -735,7 +735,7 @@ def run(
             )
     elif model_name == "BioFM-265M":
         from models.biofm import BioFMModel
-        MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/BioFM-265M"
+        MODEL_DIR = "../../model_weight/BioFM-265M"
         model = BioFMModel(
             tokenizer_path=MODEL_DIR,
             model_path=MODEL_DIR)
@@ -752,10 +752,10 @@ def run(
     elif model_name == "AIDO.DNA-300M" or model_name == "AIDO.DNA-7B":
         from models.aidoDNA import AIDOModel
         if model_name == "AIDO.DNA-300M":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/AIDO.DNA-300M"
+            MODEL_DIR = "../../model_weight/AIDO.DNA-300M"
         elif model_name == "AIDO.DNA-7B":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/AIDO.DNA-7B"
-        REPO_ROOT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model/ModelGenerator" 
+            MODEL_DIR = "../../model_weight/AIDO.DNA-7B"
+        REPO_ROOT = "../../model/ModelGenerator" 
         
         CODE_DIR = os.path.join(REPO_ROOT, "huggingface", "aido.rna", "aido_rna", "models")
 
@@ -780,14 +780,14 @@ def run(
     elif model_name == "AIDO.RNA-650M" or model_name == "AIDO.RNA-1.6B" or model_name == "AIDO.RNA-650M-CDS" or model_name == "AIDO.RNA-1.6B-CDS":
         from models.aidoRNA import AIDORNAModel
         if model_name == "AIDO.RNA-650M":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/AIDO.RNA-650M"
+            MODEL_DIR = "../../model_weight/AIDO.RNA-650M"
         elif model_name == "AIDO.RNA-1.6B":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/AIDO.RNA-1.6B"
+            MODEL_DIR = "../../model_weight/AIDO.RNA-1.6B"
         elif model_name == "AIDO.RNA-650M-CDS":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/AIDO.RNA-650M-CDS"
+            MODEL_DIR = "../../model_weight/AIDO.RNA-650M-CDS"
         elif model_name == "AIDO.RNA-1.6B-CDS":
-            MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/AIDO.RNA-1.6B-CDS"
-        REPO_ROOT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model/ModelGenerator" 
+            MODEL_DIR = "../../model_weight/AIDO.RNA-1.6B-CDS"
+        REPO_ROOT = "../../model/ModelGenerator" 
         CODE_DIR = os.path.join(REPO_ROOT, "huggingface", "aido.rna", "aido_rna", "models")
         
         model = AIDORNAModel(
@@ -811,17 +811,17 @@ def run(
         from models.omnireg_model import OmniRegGPTModel
 
         if model_name == "OmniReg-bigbird":
-            MODEL_CKPT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/gena-lm-bigbird-base-t2t/pytorch_model.bin"
-            TOKENIZER_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/omnireg_bigbird"
+            MODEL_CKPT = "../../model_weight/gena-lm-bigbird-base-t2t/pytorch_model.bin"
+            TOKENIZER_DIR = "../../model_weight/omnireg_bigbird"
         elif model_name == "OmniReg-base":
-            MODEL_CKPT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/gena-lm-bert-base-t2t/pytorch_model.bin"
-            TOKENIZER_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/gena-lm-bert-base-t2t"
+            MODEL_CKPT = "../../model_weight/gena-lm-bert-base-t2t/pytorch_model.bin"
+            TOKENIZER_DIR = "../../model_weight/gena-lm-bert-base-t2t"
         elif model_name == "OmniReg-large":
-            MODEL_CKPT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/gena-lm-bert-large-t2t/pytorch_model.bin"
-            TOKENIZER_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/gena-lm-bert-large-t2t"
-        TOKENIZER_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/gena-lm-bert-large-t2t"
+            MODEL_CKPT = "../../model_weight/gena-lm-bert-large-t2t/pytorch_model.bin"
+            TOKENIZER_DIR = "../../model_weight/gena-lm-bert-large-t2t"
+        TOKENIZER_DIR = "../../model_weight/gena-lm-bert-large-t2t"
         OMNIREG_REPO = os.path.join(PROJECT_ROOT, "models", "OmniReg-GPT")
-        HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/cache"
+        HF_HOME = "../../model_weight/cache"
 
         model = OmniRegGPTModel(
             model_name=model_name,
@@ -844,8 +844,8 @@ def run(
         )
     elif model_name == "RNA-FM":
         from models.rnafm_model import RNAFMModel
-        MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/rnafm"
-        HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/cache"
+        MODEL_DIR = "../../model_weight/rnafm"
+        HF_HOME = "../../model_weight/cache"
         model = RNAFMModel(
             model_name=model_name,
             model_path=MODEL_DIR,
@@ -864,8 +864,8 @@ def run(
         )
     elif model_name == "RiNALMo" or model_name == "RiNALMo-giga":
         from models.rinalmo_model import RiNALMoModel
-        MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/rinalmo-mega"
-        HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model"
+        MODEL_DIR = "../../model_weight/rinalmo-mega"
+        HF_HOME = "../../model"
         model = RiNALMoModel(
             model_name=model_name,
             model_path=MODEL_DIR,
@@ -885,8 +885,8 @@ def run(
         )
     elif model_name == "BiRNA-BERT":
         from models.birna_bert import BiRNABERTModel
-        MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/birna-bert"
-        TOKENIZER_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/birna-tokenizer"
+        MODEL_DIR = "../../model_weight/birna-bert"
+        TOKENIZER_DIR = "../../model_weight/birna-tokenizer"
 
     
         model = BiRNABERTModel(
@@ -906,8 +906,8 @@ def run(
         )
     elif model_name == "RNABERT":
         from models.rnabert import RNABERTModel
-        MODEL_PATH = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model/bert_mul_2.pth" 
-        CONFIG_PATH = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model/RNABERT/RNA_bert_config.json"
+        MODEL_PATH = "../../model/bert_mul_2.pth" 
+        CONFIG_PATH = "../../model/RNABERT/RNA_bert_config.json"
 
         model = RNABERTModel(
             model_name=model_name,
@@ -926,7 +926,7 @@ def run(
         )
     elif model_name== "MP-RNA":
         from models.mp_rna_model import MPRNAModel
-        MODEL_PATH = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/MP-RNA"
+        MODEL_PATH = "../../model_weight/MP-RNA"
     
         # 假设你没有单独的 HF_HOME 需求，或者在外部设置好了
         # 实例化 MP-RNA 模型
@@ -950,7 +950,7 @@ def run(
         if model_dir:
             MODEL_PATH = model_dir
         else:
-            MODEL_PATH = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/esm-1b/esm1b_t33_650M_UR50S.pt"
+            MODEL_PATH = "../../model_weight/esm-1b/esm1b_t33_650M_UR50S.pt"
 
         model = ESMModel(
             model_name=model_name,
@@ -973,8 +973,8 @@ def run(
         if model_dir:
             MODEL_PATH = model_dir
         else:
-            MODEL_PATH = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/esm2_t33_650M_UR50D"
-        HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/cache"
+            MODEL_PATH = "../../model_weight/esm2_t33_650M_UR50D"
+        HF_HOME = "../../model_weight/cache"
         os.environ["HF_HOME"] = HF_HOME
 
         model = ESM2Model(
@@ -1044,7 +1044,7 @@ def run(
         raise ValueError(f"[ERROR] 无效的数据集名称: {dataset_name}。格式应为: {{na_type}}-{{label}}-{{check}}，其中 na_type∈{all_list}, label∈{LABELS}, check∈{check_list}")
 
     # 构建数据集路径
-    split_dir = f"/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/data/all_viral/cls_data/{na_type}/{label}/{check}"
+    split_dir = f"../../GeneShield/data/all_viral/cls_data/{na_type}/{label}/{check}"
     
     # 根据label类型确定标签列
     if label == "taxon":
@@ -1312,9 +1312,9 @@ python script/run_all.py --model_name GENERator-v2-eukaryote-1.2b-base --dataset
 python script/run_all.py --model_name GENERator-v2-prokaryote-1.2b-base --dataset_name DNA-taxon-genus --force_recompute_embeddings True --train_num_windows 2 --eval_num_windows 4 --lr 1e-6
 
 
-python script/run_all.py --model_name hyena_local --dataset_name RNA-host-times --force_recompute_embeddings True --model_dir /inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-test --window_len 1024 --train_num_windows 4 --eval_num_windows 32
+python script/run_all.py --model_name hyena_local --dataset_name RNA-host-times --force_recompute_embeddings True --model_dir ../../GeneShield/pretrain/hyena-dna/hyena_local-test --window_len 1024 --train_num_windows 4 --eval_num_windows 32
 
-python script/run_all.py --model_name hyena_local --dataset_name RNA-host-times --force_recompute_embeddings True --model_dir /inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/GeneShield/pretrain/hyena-dna/hyena_local-test --window_len 512
+python script/run_all.py --model_name hyena_local --dataset_name RNA-host-times --force_recompute_embeddings True --model_dir ../../GeneShield/pretrain/hyena-dna/hyena_local-test --window_len 512
 
 
 """

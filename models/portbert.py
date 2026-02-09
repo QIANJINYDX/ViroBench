@@ -316,7 +316,7 @@ class ProtTransModel(BaseModel):
 
 
 if __name__ == "__main__":
-    MODEL_PATH = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/prot_bert"
+    MODEL_PATH = "../../model_weight/prot_bert"
     
     print("=== Testing ProtBert Adapter (DNA Input) ===")
     try:

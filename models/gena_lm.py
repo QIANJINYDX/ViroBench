@@ -213,7 +213,7 @@ class GenaLMModel(BaseModel):
 
 if __name__ == "__main__":
     # 用法测试：python -m models.gena_lm
-    CKPT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/gena-lm-bigbird-base-t2t"  # 或你的本地目录
+    CKPT = "../../model_weight/gena-lm-bigbird-base-t2t"  # 或你的本地目录
 
     seqs = [
         "ATGCGTACGTTAGC" * 50,

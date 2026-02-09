@@ -346,7 +346,7 @@ class CaduceusModel(BaseModel):
 
 if __name__ == "__main__":
     # 测试
-    MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/caduceus-ph_seqlen-131k_d_model-256_n_layer-16"
+    MODEL_DIR = "../../model_weight/caduceus-ph_seqlen-131k_d_model-256_n_layer-16"
     
     m = CaduceusModel(
         model_name="caduceus-ph_seqlen-131k_d_model-256_n_layer-16",

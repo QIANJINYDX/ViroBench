@@ -328,7 +328,7 @@ class ProtTransModel(BaseModel):
 
 
 if __name__ == "__main__":
-    MODEL_PATH = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/prot_t5_xl_uniref50"
+    MODEL_PATH = "../../model_weight/prot_t5_xl_uniref50"
     
     m = ProtTransModel(
         "ProtBert", 

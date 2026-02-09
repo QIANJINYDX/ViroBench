@@ -839,11 +839,11 @@ class Evo1Model(BaseModel):
 # # ========== 可选：脚本直接运行的快速自测 ==========
 if __name__ == "__main__":
     # 按你的真实路径修改
-    HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/cache"
+    HF_HOME = "../../model_weight/cache"
     os.environ["HF_HOME"] = HF_HOME
 
-    MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/evo-1-131k-base"
-    CFG_PATH = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/evo-1-131k-base/evo-1-131k-base_inference.yml"
+    MODEL_DIR = "../../model_weight/evo-1-131k-base"
+    CFG_PATH = "../../model_weight/evo-1-131k-base/evo-1-131k-base_inference.yml"
 
     model = Evo1Model(
         model_name="evo-1-131k-base",

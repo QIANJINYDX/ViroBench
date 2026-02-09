@@ -385,8 +385,8 @@ class DNABERT2Model(BaseModel):
 
 # # ---------- 自测 ----------
 if __name__ == "__main__":
-    MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/DNABERT-S"
-    HF_HOME = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model"
+    MODEL_DIR = "../../model_weight/DNABERT-S"
+    HF_HOME = "../../model"
 
     m = DNABERT2Model(
         model_name="DNABERT-S",

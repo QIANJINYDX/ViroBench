@@ -213,7 +213,7 @@ if __name__ == "__main__":
 
     CKPT = os.environ.get(
         "LUCAONE_CKPT",
-        "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/LucaOne-default-step36M",
+        "../../model_weight/LucaOne-default-step36M",
     )
 
     enc = LucaOneModel(

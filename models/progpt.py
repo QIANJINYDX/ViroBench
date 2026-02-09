@@ -280,7 +280,7 @@ class ProtGPT2Model(BaseModel):
 
 if __name__ == "__main__":
     # 配置: 替换为本地路径或 HF ID (nferruz/ProtGPT2)
-    MODEL_PATH = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/ProtGPT2"
+    MODEL_PATH = "../../model_weight/ProtGPT2"
     
     print("=== Testing ProtGPT2 Adapter (DNA Input) ===")
     try:

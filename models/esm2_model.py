@@ -458,7 +458,7 @@ class ESM2Model(BaseModel):
         return out.numpy() if return_numpy else out
 
 if __name__ == "__main__":
-    MODEL_PATH = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/esm2_t6_8M_UR50D"
+    MODEL_PATH = "../../model_weight/esm2_t6_8M_UR50D"
     MODEL_NAME = "esm2_t6_8M_UR50D"
     
     try:

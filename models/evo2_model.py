@@ -396,7 +396,7 @@ class Evo2Model(BaseModel):
 if __name__ == "__main__":
     # 按你的真实路径修改
     model_name = "evo2_7b_base"
-    model_path = f"/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/{model_name}/{model_name}.pt"
+    model_path = f"../../model_weight/{model_name}/{model_name}.pt"
 
     model = Evo2Model(
         model_name=model_name,

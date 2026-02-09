@@ -766,7 +766,7 @@ class GENERatorModel(BaseModel):
 # quick test
 # -------------------------
 if __name__ == "__main__":
-    MODEL_PATH = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/GENERator-v2-eukaryote-1.2b-base"
+    MODEL_PATH = "../../model_weight/GENERator-v2-eukaryote-1.2b-base"
 
     m = GENERatorModel("GENERator-v2", model_path=MODEL_PATH, device=None, max_len=16384)
 

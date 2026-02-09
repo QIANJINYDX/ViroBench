@@ -917,7 +917,7 @@ class HyenaDNAModel(BaseModel):
 
 # # # ---------- 自测 ----------
 if __name__ == "__main__":
-    CKPT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/hyenadna-medium-160k-seqlen-hf"
+    CKPT = "../../model_weight/hyenadna-medium-160k-seqlen-hf"
 
     # 示例 1：分类推理（注意：若权重不含已训练分类头，输出将随机）
     clf = HyenaDNAModel(

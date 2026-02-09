@@ -407,9 +407,9 @@ class AIDOModel(BaseModel):
 if __name__ == "__main__":
     import os
 
-    MODEL_DIR = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model_weight/AIDO.DNA-7B"
+    MODEL_DIR = "../../model_weight/AIDO.DNA-7B"
     
-    REPO_ROOT = "/inspire/hdd/project/aiscientist/yedongxin-CZXS25120006/DNAFM/model/ModelGenerator" 
+    REPO_ROOT = "../../model/ModelGenerator" 
     
     CODE_DIR = os.path.join(REPO_ROOT, "huggingface", "aido.rna", "aido_rna", "models")
 
